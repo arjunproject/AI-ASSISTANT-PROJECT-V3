@@ -162,14 +162,12 @@ function buildArchivedSummary(snippets: ArchivedContextSnippet[]): string | null
 }
 
 function sanitizeAssistantTextForMemory(text: string): string {
-  const sanitized = stripTemplateClosingForMemory(
-    text
+  const sanitized = text
     .replace(/\nSumber:\s[^\n]+/giu, '')
     .replace(/^```json\s*/iu, '')
     .replace(/^```\s*/iu, '')
     .replace(/```$/u, '')
-    .trim(),
-  );
+    .trim();
 
   return containsInternalPayload(sanitized) || containsLegacyReadFallback(sanitized) ? '' : sanitized;
 }
@@ -202,40 +200,6 @@ function containsLegacyReadFallback(text: string): boolean {
   return /\b(?:belum bisa baca otomatis|belum otomatis bisa baca data pribadimu|kirim\/unggah cuplikan|kirim cuplikan|upload spreadsheet|hubungkan google sheets|hubungkan csv|hubungkan api|langsung masuk ke sistem eksternal|nggak bisa langsung masuk ke sistem eksternal)\b/iu.test(
     text.trim(),
   );
-}
-
-function stripTemplateClosingForMemory(text: string): string {
-  const paragraphs = text
-    .split(/\n{2,}/u)
-    .map((paragraph) => paragraph.trim())
-    .filter((paragraph) => paragraph.length > 0);
-
-  while (paragraphs.length > 0 && isTemplateClosingParagraph(paragraphs[paragraphs.length - 1]!)) {
-    paragraphs.pop();
-  }
-
-  return paragraphs.join('\n\n').trim();
-}
-
-function isTemplateClosingParagraph(paragraph: string): boolean {
-  const normalized = paragraph.trim();
-  if (normalized.length === 0 || normalized.length > 220) {
-    return false;
-  }
-
-  const startsLikeOffer =
-    /^(?:kalau|jika|bila)(?:\s+\w+){0,3}\s+(?:mau|ingin|perlu)\b/iu.test(normalized) ||
-    /^(?:mau|ingin|perlu)\s+(?:aku|saya)\b/iu.test(normalized);
-  const hasOfferVerb =
-    /\b(?:aku|saya)\s+bisa\b/iu.test(normalized) ||
-    /\b(?:tinggal|coba)\s+bilang\b/iu.test(normalized) ||
-    /\bberi\s+tahu\b/iu.test(normalized);
-  const hasTemplateTarget =
-    /\b(?:detail|rincian|filter|sheet|file|excel|csv|api|kolom|baris|versi lain|hal lain)\b/iu.test(
-      normalized,
-    );
-
-  return startsLikeOffer && hasOfferVerb && hasTemplateTarget;
 }
 
 function trimForSummary(text: string, maxLength: number): string {

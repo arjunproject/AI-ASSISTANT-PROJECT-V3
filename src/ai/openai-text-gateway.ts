@@ -29,12 +29,10 @@ const LEGACY_CAPABILITY_FALLBACK_PATTERN =
 const SPREADSHEET_TOOL_NAME = 'read_spreadsheet_data';
 const LEGACY_CAPABILITY_REPAIR_MESSAGE =
   'Jangan bilang user harus kirim spreadsheet lagi, upload CSV/API, atau bahwa kamu belum bisa membaca data otomatis jika tool data resmi tersedia. Untuk pertanyaan kemampuan membaca data proyek resmi, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project dan minta sheet atau kriteria yang dibutuhkan. Jika memang perlu data, pakai tool. Jika data belum tersedia, jawab jujur singkat tanpa narasi kemampuan lama.';
-const DATA_PRESENTATION_PROMPT =
-  'Untuk jawaban umum, kamu boleh tetap singkat. Tetapi jika kamu sedang menampilkan record data spreadsheet, tampilkan setiap record yang kamu pilih secara utuh dengan seluruh field yang tersedia di record itu. Jangan mengubah satu record menjadi ringkasan satu baris jika itu membuang field penting. Jika hasil panjang, kamu boleh membaginya secara natural, tetapi setiap record yang tampil harus tetap lengkap. Setelah inti jawaban selesai, berhenti. Jangan menambahkan penutup template, CTA generik, tawaran detail/filter lain, atau ajakan Excel/CSV/API kecuali user memang memintanya langsung.';
 
 const AI_SYSTEM_PROMPT = [
   'Kamu adalah asisten chat WhatsApp.',
-  'Untuk jawaban umum, jawab singkat, padat, jelas, natural, dan tidak terlalu formal.',
+  'Jawab singkat, padat, jelas, natural, dan tidak terlalu formal.',
   'Fokus pada pesan terbaru user sebagai pusat utama.',
   'Gunakan recent conversation hanya bila memang membantu memahami pesan terbaru.',
   'Gunakan konteks lama hanya jika memang relevan atau user menyinggungnya lagi.',
@@ -51,7 +49,6 @@ const AI_SYSTEM_PROMPT = [
   'Jangan menampilkan payload internal, schema internal, metadata internal, atau objek internal ke user.',
   'Jangan mengarang fitur yang belum ada seperti image generation, image editing, write spreadsheet bisnis, atau automasi bisnis lain.',
   'Jika kamu perlu membaca data spreadsheet resmi, kamu boleh memanggil tool read_spreadsheet_data.',
-  'Gunakan query bebas jika data bisa berada di kolom mana pun dalam sheet; gunakan filters hanya jika memang ingin membatasi field tertentu.',
   'Jika user menanyakan apakah kamu bisa membaca datanya, dan tool data resmi tersedia, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project.',
   'Saat memakai data spreadsheet, jawab seperti membaca spreadsheet asli secara natural, tanpa menyebut tool, backend, mirror, JSON, atau istilah internal.',
   'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
@@ -60,8 +57,6 @@ const AI_SYSTEM_PROMPT = [
   'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
   'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
   'Jika hasil lebih dari satu dan intent sudah jelas, tampilkan semua hasil yang relevan tanpa bertanya berulang.',
-  'Instruksi singkat atau ringkas tidak boleh menghilangkan field record saat kamu sedang menampilkan data spreadsheet.',
-  'Jangan menutup jawaban dengan kalimat template yang menawarkan detail lain, filter lain, file lain, Excel, CSV, atau bantuan lanjutan kecuali user memang memintanya.',
 ].join(' ');
 
 interface GatewayExecutionOptions {
@@ -191,11 +186,10 @@ function buildGatewayRequest(
     includeTools?: boolean;
     additionalInstructions?: string | null;
     additionalInput?: string | null;
-    maxOutputTokens?: number | null;
   } = {},
 ) {
   const textVerbosity = resolveTextVerbosity();
-  const maxOutputTokens = options.maxOutputTokens ?? resolveMaxOutputTokens(request);
+  const maxOutputTokens = resolveMaxOutputTokens(request);
   const includeTools = options.includeTools !== false;
   const baseRequest: Record<string, unknown> = {
     model: modelName,
@@ -363,36 +357,12 @@ async function createGatewayResponse(
       buildGatewayRequest(modelName, request, {
         previousResponseId: extractResponseId(response),
         inputOverride: outputs.map((output) => output.item),
-        additionalInstructions: combineInstructions(
-          options.additionalInstructions ?? null,
-          DATA_PRESENTATION_PROMPT,
-        ),
-        maxOutputTokens: resolveToolReplyMaxOutputTokens(outputs.map((output) => output.result)),
+        additionalInstructions: options.additionalInstructions ?? null,
       }),
       {
         timeout: config.aiRequestTimeoutMs,
       },
     );
-
-    if (isMaxOutputTokensIncomplete(response)) {
-      const retryMaxOutputTokens = expandToolReplyMaxOutputTokens(
-        resolveToolReplyMaxOutputTokens(outputs.map((output) => output.result)),
-      );
-      response = await client.responses.create(
-        buildGatewayRequest(modelName, request, {
-          previousResponseId: extractResponseId(response),
-          inputOverride: outputs.map((output) => output.item),
-          additionalInstructions: combineInstructions(
-            options.additionalInstructions ?? null,
-            DATA_PRESENTATION_PROMPT,
-          ),
-          maxOutputTokens: retryMaxOutputTokens,
-        }),
-        {
-          timeout: config.aiRequestTimeoutMs,
-        },
-      );
-    }
     toolLoopCount += 1;
   }
 
@@ -671,11 +641,23 @@ function describeEmptyAiResponse(response: unknown): string {
 }
 
 function shouldRetryForIncompleteSearch(response: unknown, request: AiGatewayRequest): boolean {
-  if (!request.webSearchAvailable) {
+  if (!request.webSearchAvailable || !response || typeof response !== 'object') {
     return false;
   }
 
-  return isMaxOutputTokensIncomplete(response);
+  const typedResponse = response as {
+    status?: unknown;
+    incomplete_details?: { reason?: unknown } | null;
+  };
+
+  return (
+    typedResponse.status === 'incomplete' &&
+    Boolean(
+      typedResponse.incomplete_details &&
+        typeof typedResponse.incomplete_details === 'object' &&
+        typedResponse.incomplete_details.reason === 'max_output_tokens',
+    )
+  );
 }
 
 function resolveMaxOutputTokens(request: AiGatewayRequest): number {
@@ -726,11 +708,6 @@ function buildSpreadsheetTool(): Record<string, unknown> {
           type: 'string',
           enum: ['STOK MOTOR', 'PENGELUARAN HARIAN', 'TOTAL ASET'],
         },
-        query: {
-          type: ['string', 'null'],
-          description:
-            'Pencarian bebas lintas seluruh isi row dan cell dalam sheet. Gunakan jika data bisa berada di kolom mana pun.',
-        },
         includeSold: {
           type: ['boolean', 'null'],
           description: 'Khusus STOK MOTOR. Hanya true jika user eksplisit minta motor terjual.',
@@ -753,7 +730,7 @@ function buildSpreadsheetTool(): Record<string, unknown> {
           },
         },
       },
-      required: ['sheet', 'query', 'includeSold', 'limit', 'filters'],
+      required: ['sheet', 'includeSold', 'limit', 'filters'],
     },
   };
 }
@@ -850,7 +827,6 @@ async function requestSafeRewrite(
         'Tugas kamu hanya menulis ulang jawaban agar aman dan natural.',
         'Jangan menambah data baru, jangan mengubah fakta, jangan menyebut tool, backend, mirror, JSON, path, state, authority, atau istilah internal.',
         'Pastikan jawaban akhir berupa bahasa manusia yang enak dibaca.',
-        'Jangan menambahkan penutup template, CTA generik, atau tawaran bantuan lanjutan yang tidak diminta user.',
       ].join(' '),
       input: [
         'Tulis ulang jawaban berikut agar aman untuk user akhir:',
@@ -917,14 +893,6 @@ function dedupeStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
-function combineInstructions(...parts: Array<string | null | undefined>): string | null {
-  const normalized = parts
-    .map((part) => (typeof part === 'string' ? part.trim() : ''))
-    .filter((part) => part.length > 0);
-
-  return normalized.length > 0 ? normalized.join(' ') : null;
-}
-
 function mergeDataReadResults(
   left: AiGatewayDataReadResult,
   right: AiGatewayDataReadResult,
@@ -937,48 +905,4 @@ function mergeDataReadResults(
     sheetNames: dedupeStrings([...left.sheetNames, ...right.sheetNames]),
     toolError: right.toolError ?? left.toolError,
   };
-}
-
-function isMaxOutputTokensIncomplete(response: unknown): boolean {
-  if (!response || typeof response !== 'object') {
-    return false;
-  }
-
-  const typedResponse = response as {
-    status?: unknown;
-    incomplete_details?: { reason?: unknown } | null;
-  };
-
-  return (
-    typedResponse.status === 'incomplete' &&
-    Boolean(
-      typedResponse.incomplete_details &&
-        typeof typedResponse.incomplete_details === 'object' &&
-        typedResponse.incomplete_details.reason === 'max_output_tokens',
-    )
-  );
-}
-
-function resolveToolReplyMaxOutputTokens(results: SpreadsheetReadResponse[]): number {
-  const totalReturnedRows = results.reduce((sum, result) => sum + result.rows.length, 0);
-  const totalFilteredRows = results.reduce((sum, result) => sum + result.filteredRowCount, 0);
-  const totalCells = results.reduce(
-    (sum, result) =>
-      sum + result.rows.reduce((rowSum, row) => rowSum + Object.keys(row).length, 0),
-    0,
-  );
-
-  if (totalFilteredRows >= 40 || totalReturnedRows >= 25 || totalCells >= 280) {
-    return 3200;
-  }
-
-  if (totalFilteredRows >= 15 || totalReturnedRows >= 8 || totalCells >= 120) {
-    return 2200;
-  }
-
-  return 1400;
-}
-
-function expandToolReplyMaxOutputTokens(current: number): number {
-  return Math.min(Math.max(current + 1000, 2200), 4200);
 }

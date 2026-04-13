@@ -140,40 +140,6 @@ test('ai conversation store does not keep legacy read fallback disclaimers in me
   );
 });
 
-test('ai conversation store strips generic trailing CTA closings from assistant memory', () => {
-  const store = createAiConversationSessionStore(1);
-
-  store.rememberExchange(
-    'chat-template-closing',
-    'Tampilkan data motor yang ready.',
-    [
-      'NO: 23',
-      'NAMA MOTOR: beat',
-      'STATUS: READY',
-      '',
-      'Kalau mau, aku bisa bantu detail lain atau bikin versi Excel/CSV.',
-    ].join('\n'),
-    '2026-04-10T00:00:00.000Z',
-    'none',
-  );
-  store.rememberExchange(
-    'chat-template-closing',
-    'Lanjut',
-    'Siap, lanjut dari data yang tadi.',
-    '2026-04-10T00:01:00.000Z',
-    'current',
-  );
-
-  const prepared = store.prepareContext('chat-template-closing', 'cek konteks');
-
-  assert.match(prepared.summary ?? '', /NO: 23/i);
-  assert.doesNotMatch(prepared.summary ?? '', /excel|csv|detail lain/i);
-  assert.doesNotMatch(
-    prepared.transcript.map((turn) => turn.text).join('\n'),
-    /excel|csv|detail lain/i,
-  );
-});
-
 test('ai conversation store keeps short content-bearing follow-ups inside the recent conversation window', () => {
   const store = createAiConversationSessionStore(4);
 
