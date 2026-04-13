@@ -48,15 +48,20 @@ export function createAiConversationSessionStore(maxTurns: number): AiConversati
         archivedSnippets: [],
         updatedAt: observedAt,
       };
+      const sanitizedAssistantText = sanitizeAssistantTextForMemory(assistantText);
 
       const nextRecentTurns = [
         ...existing.recentTurns,
         { role: 'user' as const, text: userText, observedAt },
-        {
-          role: 'assistant' as const,
-          text: sanitizeAssistantTextForMemory(assistantText),
-          observedAt,
-        },
+        ...(sanitizedAssistantText
+          ? [
+              {
+                role: 'assistant' as const,
+                text: sanitizedAssistantText,
+                observedAt,
+              },
+            ]
+          : []),
       ];
 
       const overflowCount = Math.max(0, nextRecentTurns.length - maxRecentTurns);

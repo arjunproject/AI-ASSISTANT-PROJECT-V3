@@ -585,7 +585,7 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
               {
                 type: 'function_call',
                 name: 'read_spreadsheet_data',
-                arguments: '{"sheet":"STOK MOTOR","includeSold":false}',
+                arguments: '{"sheet":"STOK MOTOR","includeSold":false,"limit":null,"filters":null}',
                 call_id: 'call-1',
               },
             ],
@@ -640,6 +640,14 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   assert.equal(response.text, 'Stok yang siap tersedia ada beberapa unit.');
   assert.equal(requests.length, 2);
   assert.equal(requests[0]?.tools?.some((tool: { name?: string }) => tool.name === 'read_spreadsheet_data'), true);
+  assert.deepEqual(
+    requests[0]?.tools?.[0]?.parameters?.required ?? null,
+    ['sheet', 'includeSold', 'limit', 'filters'],
+  );
+  assert.deepEqual(
+    requests[0]?.tools?.[0]?.parameters?.properties?.filters?.items?.required ?? null,
+    ['field', 'operator', 'value'],
+  );
   assert.equal(requests[1]?.previous_response_id, 'resp-1');
   assert.equal(Array.isArray(requests[1]?.input), true);
   assert.equal(response.dataRead!.used, true);
@@ -672,7 +680,7 @@ test('ai gateway repairs legacy spreadsheet fallback replies with a second model
               {
                 type: 'function_call',
                 name: 'read_spreadsheet_data',
-                arguments: '{"sheet":"STOK MOTOR","filters":[{"field":"NAMA MOTOR","value":"sonic"}]}',
+                arguments: '{"sheet":"STOK MOTOR","includeSold":false,"limit":null,"filters":[{"field":"NAMA MOTOR","operator":"contains","value":"sonic"}]}',
                 call_id: 'call-repair-1',
               },
             ],

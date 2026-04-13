@@ -14,14 +14,14 @@ export type SpreadsheetReadFilterOperator =
 
 export interface SpreadsheetReadFilter {
   field: string;
-  operator?: SpreadsheetReadFilterOperator;
+  operator: SpreadsheetReadFilterOperator;
   value: string;
 }
 
 export interface SpreadsheetReadRequest {
   sheet: SpreadsheetReadSheetName;
-  filters?: SpreadsheetReadFilter[];
-  includeSold?: boolean;
+  filters?: SpreadsheetReadFilter[] | null;
+  includeSold?: boolean | null;
   limit?: number | null;
 }
 

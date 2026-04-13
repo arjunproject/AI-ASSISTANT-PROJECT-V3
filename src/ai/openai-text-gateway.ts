@@ -28,7 +28,7 @@ const LEGACY_CAPABILITY_FALLBACK_PATTERN =
 
 const SPREADSHEET_TOOL_NAME = 'read_spreadsheet_data';
 const LEGACY_CAPABILITY_REPAIR_MESSAGE =
-  'Jangan bilang user harus kirim spreadsheet lagi, upload CSV/API, atau bahwa kamu belum bisa membaca data otomatis jika tool data resmi tersedia. Jika memang perlu data, pakai tool. Jika data belum tersedia, jawab jujur singkat tanpa narasi kemampuan lama.';
+  'Jangan bilang user harus kirim spreadsheet lagi, upload CSV/API, atau bahwa kamu belum bisa membaca data otomatis jika tool data resmi tersedia. Untuk pertanyaan kemampuan membaca data proyek resmi, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project dan minta sheet atau kriteria yang dibutuhkan. Jika memang perlu data, pakai tool. Jika data belum tersedia, jawab jujur singkat tanpa narasi kemampuan lama.';
 
 const AI_SYSTEM_PROMPT = [
   'Kamu adalah asisten chat WhatsApp.',
@@ -49,8 +49,10 @@ const AI_SYSTEM_PROMPT = [
   'Jangan menampilkan payload internal, schema internal, metadata internal, atau objek internal ke user.',
   'Jangan mengarang fitur yang belum ada seperti image generation, image editing, write spreadsheet bisnis, atau automasi bisnis lain.',
   'Jika kamu perlu membaca data spreadsheet resmi, kamu boleh memanggil tool read_spreadsheet_data.',
+  'Jika user menanyakan apakah kamu bisa membaca datanya, dan tool data resmi tersedia, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project.',
   'Saat memakai data spreadsheet, jawab seperti membaca spreadsheet asli secara natural, tanpa menyebut tool, backend, mirror, JSON, atau istilah internal.',
   'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
+  'Jangan mengarahkan user ke upload file atau koneksi sumber data lain kecuali user memang sedang membahas sumber data di luar spreadsheet resmi proyek.',
   'Jika menampilkan data STOK MOTOR, gunakan nomor resmi dari data, bukan numbering buatan.',
   'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
   'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
@@ -707,15 +709,15 @@ function buildSpreadsheetTool(): Record<string, unknown> {
           enum: ['STOK MOTOR', 'PENGELUARAN HARIAN', 'TOTAL ASET'],
         },
         includeSold: {
-          type: 'boolean',
+          type: ['boolean', 'null'],
           description: 'Khusus STOK MOTOR. Hanya true jika user eksplisit minta motor terjual.',
         },
         limit: {
-          type: 'number',
+          type: ['number', 'null'],
           minimum: 1,
         },
         filters: {
-          type: 'array',
+          type: ['array', 'null'],
           items: {
             type: 'object',
             additionalProperties: false,
@@ -724,11 +726,11 @@ function buildSpreadsheetTool(): Record<string, unknown> {
               operator: { type: 'string', enum: ['contains', 'equals', 'starts_with'] },
               value: { type: 'string' },
             },
-            required: ['field', 'value'],
+            required: ['field', 'operator', 'value'],
           },
         },
       },
-      required: ['sheet'],
+      required: ['sheet', 'includeSold', 'limit', 'filters'],
     },
   };
 }

@@ -133,6 +133,7 @@ test('ai conversation store does not keep legacy read fallback disclaimers in me
   const prepared = store.prepareContext('chat-fallback', 'cek lagi');
 
   assert.doesNotMatch(prepared.summary ?? '', /belum bisa baca otomatis|hubungkan google sheets|csv\/api/i);
+  assert.equal(prepared.transcript.length, 2);
   assert.doesNotMatch(
     prepared.transcript.map((turn) => turn.text).join('\n'),
     /belum bisa baca otomatis|hubungkan google sheets|csv\/api/i,
