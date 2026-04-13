@@ -39,6 +39,7 @@ const SESSION_ERROR_PATTERNS = [
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 const SELF_PROBE_DELAY_MS = 1_500;
 const SELF_PROBE_TIMEOUT_MS = 20_000;
+const SELF_PROBE_MESSAGE_TEXT = 'Tes koneksi internal bot. Abaikan pesan ini ya.';
 const MEDIA_DOWNLOAD_LOGGER = {
   level: 'info',
   child() {
@@ -1068,7 +1069,7 @@ export async function startBaileysTransport(
 
     try {
       const probeMessage = await activeSocket.sendMessage(selfProbeJid, {
-        text: `[runtime message flow probe ${now}]`,
+        text: SELF_PROBE_MESSAGE_TEXT,
       });
       if (probeMessage) {
         messageStore.remember(probeMessage);

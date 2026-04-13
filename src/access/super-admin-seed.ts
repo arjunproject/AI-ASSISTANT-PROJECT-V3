@@ -28,6 +28,14 @@ export function getOfficialSuperAdminProfiles(overrides?: string[]): OfficialSup
   });
 }
 
+export function getFounderSuperAdminNumber(overrides?: string[]): string {
+  return getOfficialSuperAdminSeed(overrides)[0] ?? OFFICIAL_SUPER_ADMIN_NUMBERS[0];
+}
+
+export function getManagedSeedSuperAdminProfiles(overrides?: string[]): OfficialSuperAdminProfile[] {
+  return getOfficialSuperAdminProfiles(overrides).slice(1);
+}
+
 function normalizePhoneNumber(value: string): string | null {
   const digits = value.replace(/[^\d]/g, '');
   return digits.length > 0 ? digits : null;

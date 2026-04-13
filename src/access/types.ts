@@ -2,6 +2,7 @@ export type AccessRole = 'super_admin' | 'admin' | 'non_admin';
 
 export type AccessReason =
   | 'official_super_admin'
+  | 'active_dynamic_super_admin'
   | 'active_dynamic_admin'
   | 'dm_access_disabled'
   | 'group_access_disabled'
@@ -25,6 +26,16 @@ export interface DynamicAdminRecord {
   nameKey: string;
   dmAccessEnabled: boolean;
   groupAccessEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  source: string;
+}
+
+export interface ManagedSuperAdminRecord {
+  normalizedPhoneNumber: string;
+  displayName: string;
+  nameKey: string;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
   source: string;

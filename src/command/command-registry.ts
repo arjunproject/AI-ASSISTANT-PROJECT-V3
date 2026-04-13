@@ -2,6 +2,55 @@ import type { AdminCommandDefinition } from './types.js';
 
 const ADMIN_COMMAND_REGISTRY: readonly AdminCommandDefinition[] = [
   {
+    name: 'superadmin.add',
+    canonical: 'superadmin add',
+    usage: 'SuperAdmin add <nama> <nomor>',
+    description: 'Tambah super admin terkelola aktif.',
+    requiresTarget: true,
+  },
+  {
+    name: 'superadmin.remove',
+    canonical: 'superadmin remove',
+    usage: 'SuperAdmin remove <nama|nomor|nama nomor>',
+    description: 'Hapus super admin terkelola.',
+    requiresTarget: true,
+  },
+  {
+    name: 'superadmin.list',
+    canonical: 'superadmin list',
+    usage: 'SuperAdmin list',
+    description: 'Lihat founder dan seluruh super admin aktif/terkelola.',
+    requiresTarget: false,
+  },
+  {
+    name: 'superadmin.on',
+    canonical: 'superadmin on',
+    usage: 'SuperAdmin on <nama|nomor|nama nomor>',
+    description: 'Aktifkan super admin terkelola.',
+    requiresTarget: true,
+  },
+  {
+    name: 'superadmin.off',
+    canonical: 'superadmin off',
+    usage: 'SuperAdmin off <nama|nomor|nama nomor>',
+    description: 'Nonaktifkan super admin terkelola.',
+    requiresTarget: true,
+  },
+  {
+    name: 'superadmin.status',
+    canonical: 'superadmin status',
+    usage: 'SuperAdmin status <nama|nomor|nama nomor>',
+    description: 'Lihat status satu super admin.',
+    requiresTarget: true,
+  },
+  {
+    name: 'superadmin.help',
+    canonical: 'superadmin help',
+    usage: 'SuperAdmin help',
+    description: 'Lihat command super admin resmi.',
+    requiresTarget: false,
+  },
+  {
     name: 'admin.add',
     canonical: 'admin add',
     usage: 'Admin add <nama> <nomor>',
@@ -163,6 +212,6 @@ export function findPromptCommandDefinition(canonical: string): AdminCommandDefi
 export function buildAdminHelpText(): string {
   return [
     'Admin help:',
-    ...getOfficialCommandRegistry().map((definition) => `- ${definition.usage}`),
+    ...ADMIN_COMMAND_REGISTRY.map((definition) => `- ${definition.usage}`),
   ].join('\n');
 }

@@ -40,19 +40,21 @@ test('super admin can manage named dynamic admins and natural postfix commands h
     },
   });
 
-  const resolution = buildResolution('201507007785');
-  const accessDecision = buildDecision('super_admin', 'official_super_admin', true, '201507007785');
+  const managerResolution = buildResolution('201507007785');
+  const managerDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
+  const founderResolution = buildResolution('6285655002277', true);
+  const founderDecision = buildDecision('super_admin', 'official_super_admin', true, '6285655002277', true);
 
-  await executor.processAllowedMessage(buildMessage('Admin add Rahma 62588689668'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin add Rahmah 6281234567890', 'cmd-rahmah'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin status Rahma', 'cmd-status-name'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin rahma off', 'cmd-off-name'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin on rahmA', 'cmd-on-name'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin status 62588689668', 'cmd-status-number'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin off Rahma 62588689668', 'cmd-off-both'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin rahma on', 'cmd-on-postfix'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin status Rahmah', 'cmd-status-rahmah'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('admin rahma remove', 'cmd-remove-name'), resolution, accessDecision);
+  await executor.processAllowedMessage(buildMessage('Admin add Rahma 62588689668'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin add Rahmah 6281234567890', 'cmd-rahmah'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin status Rahma', 'cmd-status-name'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin rahma off', 'cmd-off-name'), founderResolution, founderDecision);
+  await executor.processAllowedMessage(buildMessage('admin on rahmA', 'cmd-on-name'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin status 62588689668', 'cmd-status-number'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin off Rahma 62588689668', 'cmd-off-both'), founderResolution, founderDecision);
+  await executor.processAllowedMessage(buildMessage('admin rahma on', 'cmd-on-postfix'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin status Rahmah', 'cmd-status-rahmah'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('admin rahma remove', 'cmd-remove-name'), founderResolution, founderDecision);
 
   const registry = await inspectDynamicAdminRegistry(config.accessRegistryFilePath);
   assert.equal(registry.admins.has('62588689668'), false);
@@ -74,7 +76,7 @@ test('super admin can manage named dynamic admins and natural postfix commands h
   assert.equal(snapshot.lastCommandName, 'admin.remove');
   assert.equal(snapshot.lastCommandAllowed, true);
   assert.equal(snapshot.lastCommandReason, 'admin_removed');
-  assert.equal(snapshot.lastCommandSender, '201507007785');
+  assert.equal(snapshot.lastCommandSender, '6285655002277');
 
   const logContents = await readFile(config.logFilePath, 'utf8');
   assert.match(logContents, /command\.detected/);
@@ -158,17 +160,19 @@ test('super admin can control DM and group access modes independently', async ()
     },
   });
 
-  const resolution = buildResolution('201507007785');
-  const accessDecision = buildDecision('super_admin', 'official_super_admin', true, '201507007785');
+  const managerResolution = buildResolution('201507007785');
+  const managerDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
+  const founderResolution = buildResolution('6285655002277', true);
+  const founderDecision = buildDecision('super_admin', 'official_super_admin', true, '6285655002277', true);
 
-  await executor.processAllowedMessage(buildMessage('Admin add Rara 201128840078'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin DM off Rara', 'cmd-dm-off'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin status Rara', 'cmd-status-dm-off'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin Group off Rara', 'cmd-group-off'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin status Rara', 'cmd-status-group-off'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin Group on Rara', 'cmd-group-on'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin DM on Rara', 'cmd-dm-on'), resolution, accessDecision);
-  await executor.processAllowedMessage(buildMessage('Admin list', 'cmd-list'), resolution, accessDecision);
+  await executor.processAllowedMessage(buildMessage('Admin add Rara 201128840078'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('Admin DM off Rara', 'cmd-dm-off'), founderResolution, founderDecision);
+  await executor.processAllowedMessage(buildMessage('Admin status Rara', 'cmd-status-dm-off'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('Admin Group off Rara', 'cmd-group-off'), founderResolution, founderDecision);
+  await executor.processAllowedMessage(buildMessage('Admin status Rara', 'cmd-status-group-off'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('Admin Group on Rara', 'cmd-group-on'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('Admin DM on Rara', 'cmd-dm-on'), managerResolution, managerDecision);
+  await executor.processAllowedMessage(buildMessage('Admin list', 'cmd-list'), managerResolution, managerDecision);
 
   assert.deepEqual(replies, [
     'ADMIN_ADDED Rara',
@@ -178,8 +182,89 @@ test('super admin can control DM and group access modes independently', async ()
     'STATUS Rara dm:off group:off',
     'ADMIN_GROUP_ON Rara',
     'ADMIN_DM_ON Rara',
-    'SUPER_ADMIN\n- Bot dm:on group:on\n- Super Admin dm:on group:on\nADMIN\n- Rara dm:on group:on',
+    'SUPER_ADMIN\n- Bot founder:on\n- Super Admin command:on\nADMIN\n- Rara dm:on group:on',
   ]);
+});
+
+test('founder can manage managed super admins while non-founder super admin cannot mutate authority', async () => {
+  const temp = await createTempRoot('stage-4-super-admin-authority-executor-');
+  cleanups.push(temp.cleanup);
+
+  const config = loadAppConfig({ projectRoot: temp.root, stageName: 'stage-4' });
+  const logger = createLogger(config.logFilePath);
+  const runtimeStateStore = await createRuntimeStateStore(config);
+  const replies: string[] = [];
+  const executor = createAdminCommandExecutor({
+    config,
+    logger,
+    runtimeStateStore,
+    async sendReply(_chatJid, text) {
+      replies.push(text);
+    },
+  });
+
+  const founderResolution = buildResolution('6285655002277', true);
+  const founderDecision = buildDecision('super_admin', 'official_super_admin', true, '6285655002277', true);
+  const managerResolution = buildResolution('201507007785');
+  const managerDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
+
+  await executor.processAllowedMessage(
+    buildMessage('superadmin add Rina 628111222333', 'cmd-superadmin-add'),
+    founderResolution,
+    founderDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin status Rina', 'cmd-superadmin-status'),
+    managerResolution,
+    managerDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin list', 'cmd-superadmin-list'),
+    managerResolution,
+    managerDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin off Rina', 'cmd-superadmin-off-blocked'),
+    managerResolution,
+    managerDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('admin off Rina', 'cmd-admin-off-blocked'),
+    managerResolution,
+    managerDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin off Rina', 'cmd-superadmin-off-founder'),
+    founderResolution,
+    founderDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin status Rina', 'cmd-superadmin-status-off'),
+    founderResolution,
+    founderDecision,
+  );
+  await executor.processAllowedMessage(
+    buildMessage('superadmin remove Rina', 'cmd-superadmin-remove-founder'),
+    founderResolution,
+    founderDecision,
+  );
+
+  assert.deepEqual(replies, [
+    'SUPER_ADMIN_ADDED Rina',
+    'SUPER_ADMIN_STATUS Rina role:manager active:on',
+    'SUPER_ADMIN\n- Bot founder:on\n- Rina command:on\n- Super Admin command:on',
+    'FOUNDER_ONLY',
+    'FOUNDER_ONLY',
+    'SUPER_ADMIN_OFF Rina',
+    'SUPER_ADMIN_STATUS Rina role:manager active:off',
+    'SUPER_ADMIN_REMOVED Rina',
+  ]);
+
+  const snapshot = runtimeStateStore.getSnapshot();
+  assert.equal(snapshot.lastCommandName, 'superadmin.remove');
+  assert.equal(snapshot.lastCommandAllowed, true);
+  assert.equal(snapshot.lastCommandReason, 'super_admin_removed');
+  assert.equal(snapshot.lastCommandSender, '6285655002277');
 });
 
 test('super admin identity stays protected from dynamic admin naming collisions', async () => {
@@ -200,7 +285,7 @@ test('super admin identity stays protected from dynamic admin naming collisions'
   });
 
   const resolution = buildResolution('201507007785');
-  const accessDecision = buildDecision('super_admin', 'official_super_admin', true, '201507007785');
+  const accessDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
 
   const byNumber = await executor.processAllowedMessage(
     buildMessage('Admin add RahmaBot 6285655002277', 'cmd-super-admin-by-number'),
@@ -241,7 +326,7 @@ test('active dynamic admin is still rejected honestly when trying admin command'
   });
 
   const superAdminResolution = buildResolution('201507007785');
-  const superAdminDecision = buildDecision('super_admin', 'official_super_admin', true, '201507007785');
+  const superAdminDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
   await executor.processAllowedMessage(
     buildMessage('Admin add Rahma 62588689668', 'seed-admin'),
     superAdminResolution,
@@ -295,7 +380,7 @@ test('super admin can manage dynamic prompts through official whatsapp commands'
   });
 
   const resolution = buildResolution('201507007785');
-  const accessDecision = buildDecision('super_admin', 'official_super_admin', true, '201507007785');
+  const accessDecision = buildDecision('super_admin', 'active_dynamic_super_admin', true, '201507007785');
 
   await executor.processAllowedMessage(buildMessage('Prompt add', 'prompt-add-open'), resolution, accessDecision);
   await executor.processAllowedMessage(buildMessage([

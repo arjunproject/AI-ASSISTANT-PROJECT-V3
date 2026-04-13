@@ -1,8 +1,18 @@
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 import { inspectDynamicAdminRegistry, writeDynamicAdminRegistry } from '../access/admin-registry.js';
-import { getOfficialSuperAdminProfiles } from '../access/super-admin-seed.js';
-import type { AccessDecision, DynamicAdminRecord } from '../access/types.js';
+import {
+  getFounderSuperAdminNumber,
+  getManagedSeedSuperAdminProfiles,
+  getOfficialSuperAdminProfiles,
+  type OfficialSuperAdminProfile,
+} from '../access/super-admin-seed.js';
+import {
+  inspectManagedSuperAdminRegistry,
+  upsertManagedSuperAdminRecord,
+  writeManagedSuperAdminRegistry,
+} from '../access/super-admin-registry.js';
+import type { AccessDecision, DynamicAdminRecord, ManagedSuperAdminRecord } from '../access/types.js';
 import type { AppConfig } from '../config/app-config.js';
 import type { Logger } from '../core/logger.js';
 import type { RuntimeStateStore } from '../runtime/runtime-state-store.js';
@@ -34,7 +44,9 @@ export function createAdminCommandExecutor(dependencies: {
   sendReply(chatJid: string, text: string, quotedMessage: WAMessage): Promise<void>;
 }): AdminCommandExecutor {
   const { config, logger, runtimeStateStore, sendReply } = dependencies;
-  const superAdminProfiles = getOfficialSuperAdminProfiles(config.superAdminNumbers);
+  const officialSuperAdminProfiles = getOfficialSuperAdminProfiles(config.superAdminNumbers);
+  const founderSuperAdminNumber = getFounderSuperAdminNumber(config.superAdminNumbers);
+  const founderSuperAdminProfile = officialSuperAdminProfiles[0] ?? null;
   const promptCommandService = createPromptCommandService({
     config,
     runtimeStateStore,
@@ -222,19 +234,24 @@ export function createAdminCommandExecutor(dependencies: {
       }
 
       const registry = await inspectDynamicAdminRegistry(config.accessRegistryFilePath);
+      const managedSuperAdmins = await inspectManagedSuperAdminRegistry({
+        registryFilePath: config.superAdminRegistryFilePath,
+        seededProfiles: getManagedSeedSuperAdminProfiles(config.superAdminNumbers),
+      });
+      const superAdminProfiles = buildActiveSuperAdminProfiles(founderSuperAdminProfile, managedSuperAdmins);
       await runtimeStateStore.update({
-        commandRegistryReady: registry.ready,
+        commandRegistryReady: registry.ready && managedSuperAdmins.ready,
       });
 
-      if (!registry.ready) {
+      if (!registry.ready || !managedSuperAdmins.ready) {
         logger.warn('command.error', {
           messageId: context.messageId,
           commandName: parsed.definition.name,
           senderJid: context.senderJid,
           normalizedSender: context.normalizedSender,
           chatJid: context.chatJid,
-          message: registry.error,
-          registryFilePath: config.accessRegistryFilePath,
+          message: registry.error ?? managedSuperAdmins.error,
+          registryFilePath: !registry.ready ? config.accessRegistryFilePath : config.superAdminRegistryFilePath,
         });
         return rejectCommand({
           runtimeStateStore,
@@ -249,8 +266,87 @@ export function createAdminCommandExecutor(dependencies: {
         });
       }
 
+      if (isFounderOnlyCommand(parsed.definition.name) && !isFounderActor(context.normalizedSender, founderSuperAdminNumber)) {
+        return rejectCommand({
+          runtimeStateStore,
+          logger,
+          message,
+          context,
+          sendReply,
+          registryReady: true,
+          commandName: parsed.definition.name,
+          reason: 'founder_only',
+          replyText: 'FOUNDER_ONLY',
+        });
+      }
+
       try {
         switch (parsed.definition.name) {
+          case 'superadmin.help':
+            return executeCommand({
+              runtimeStateStore,
+              logger,
+              message,
+              context,
+              sendReply,
+              registryReady: true,
+              commandName: parsed.definition.name,
+              reason: 'help_reported',
+              replyText: buildSuperAdminHelpText(),
+            });
+          case 'superadmin.list':
+            return executeCommand({
+              runtimeStateStore,
+              logger,
+              message,
+              context,
+              sendReply,
+              registryReady: true,
+              commandName: parsed.definition.name,
+              reason: 'list_reported',
+              replyText: buildSuperAdminListReply(founderSuperAdminProfile, [...managedSuperAdmins.superAdmins.values()]),
+            });
+          case 'superadmin.status':
+            return handleManagedSuperAdminStatusCommand({
+              runtimeStateStore,
+              logger,
+              message,
+              context,
+              sendReply,
+              targetInput: parsed.rawArgsText ?? parsed.argsText,
+              founderSuperAdminProfile,
+              managedSuperAdminRecords: managedSuperAdmins.superAdmins,
+            });
+          case 'superadmin.add':
+            return handleManagedSuperAdminAddCommand({
+              config,
+              runtimeStateStore,
+              logger,
+              message,
+              context,
+              sendReply,
+              targetInput: parsed.rawArgsText ?? parsed.argsText,
+              founderSuperAdminProfile,
+              managedSuperAdminRecords: managedSuperAdmins.superAdmins,
+              managedSuperAdminRecordsByNameKey: managedSuperAdmins.superAdminsByNameKey,
+              registryRecords: registry.admins,
+              registryRecordsByNameKey: registry.adminsByNameKey,
+            });
+          case 'superadmin.on':
+          case 'superadmin.off':
+          case 'superadmin.remove':
+            return handleManagedSuperAdminUpdateCommand({
+              action: parsed.definition.name,
+              config,
+              runtimeStateStore,
+              logger,
+              message,
+              context,
+              sendReply,
+              targetInput: parsed.rawArgsText ?? parsed.argsText,
+              founderSuperAdminProfile,
+              managedSuperAdminRecords: managedSuperAdmins.superAdmins,
+            });
           case 'admin.help':
             return executeCommand({
               runtimeStateStore,
@@ -273,7 +369,7 @@ export function createAdminCommandExecutor(dependencies: {
               registryReady: true,
               commandName: parsed.definition.name,
               reason: 'list_reported',
-              replyText: buildAdminListReply(superAdminProfiles, [...registry.admins.values()]),
+              replyText: buildAdminListReply(founderSuperAdminProfile, [...managedSuperAdmins.superAdmins.values()], [...registry.admins.values()]),
             });
           case 'admin.status':
             return handleStatusCommand({
@@ -489,6 +585,318 @@ async function handleAddCommand(input: {
           ? 'admin_activated'
           : 'admin_added',
     replyText: existingByNumber ? `ADMIN_ON ${existingByNumber.displayName}` : `ADMIN_ADDED ${displayName}`,
+  });
+}
+
+async function handleManagedSuperAdminAddCommand(input: {
+  config: AppConfig;
+  runtimeStateStore: RuntimeStateStore;
+  logger: Logger;
+  message: WAMessage;
+  context: CommandExecutionContext;
+  sendReply(chatJid: string, text: string, quotedMessage: WAMessage): Promise<void>;
+  targetInput: string | null;
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null;
+  managedSuperAdminRecords: Map<string, ManagedSuperAdminRecord>;
+  managedSuperAdminRecordsByNameKey: Map<string, ManagedSuperAdminRecord>;
+  registryRecords: Map<string, DynamicAdminRecord>;
+  registryRecordsByNameKey: Map<string, DynamicAdminRecord>;
+}): Promise<CommandResult> {
+  const parsedTarget = parseAdminAddTarget(input.targetInput);
+  if (!parsedTarget.ok) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: parsedTarget.reason,
+      replyText: buildRejectedReply(parsedTarget.reason),
+    });
+  }
+
+  const target = parsedTarget.target;
+  const normalizedPhoneNumber = target.normalizedPhoneNumber;
+  const displayName = target.displayName;
+  const nameKey = target.nameKey;
+
+  if (
+    (input.founderSuperAdminProfile &&
+      (input.founderSuperAdminProfile.normalizedPhoneNumber === normalizedPhoneNumber ||
+        input.founderSuperAdminProfile.nameKey === nameKey))
+  ) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: 'super_admin_protected',
+      replyText: 'SUPER_ADMIN_PROTECTED',
+    });
+  }
+
+  const existingManagedByName = input.managedSuperAdminRecordsByNameKey.get(nameKey) ?? null;
+  if (existingManagedByName && existingManagedByName.normalizedPhoneNumber !== normalizedPhoneNumber) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: 'name_already_exists',
+      replyText: `NAME_ALREADY_EXISTS ${existingManagedByName.displayName}`,
+    });
+  }
+
+  const existingManagedByNumber = input.managedSuperAdminRecords.get(normalizedPhoneNumber) ?? null;
+  if (existingManagedByNumber && existingManagedByNumber.nameKey !== nameKey) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: 'target_mismatch',
+      replyText: 'TARGET_MISMATCH',
+    });
+  }
+
+  const existingAdminByName = input.registryRecordsByNameKey.get(nameKey) ?? null;
+  if (existingAdminByName && existingAdminByName.normalizedPhoneNumber !== normalizedPhoneNumber) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: 'name_already_exists',
+      replyText: `NAME_ALREADY_EXISTS ${existingAdminByName.displayName}`,
+    });
+  }
+
+  const existingAdminByNumber = input.registryRecords.get(normalizedPhoneNumber) ?? null;
+  if (existingAdminByNumber && existingAdminByNumber.nameKey !== nameKey) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.add',
+      reason: 'target_mismatch',
+      replyText: 'TARGET_MISMATCH',
+    });
+  }
+
+  const now = new Date().toISOString();
+  const nextRecord: ManagedSuperAdminRecord = existingManagedByNumber
+    ? {
+        ...existingManagedByNumber,
+        displayName,
+        nameKey,
+        isActive: true,
+        updatedAt: now,
+        source: 'super_admin_command',
+      }
+    : {
+        normalizedPhoneNumber,
+        displayName,
+        nameKey,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        source: 'super_admin_command',
+      };
+
+  const nextRecords = upsertManagedSuperAdminRecord([...input.managedSuperAdminRecords.values()], nextRecord);
+  await writeManagedSuperAdminRegistry(input.config.superAdminRegistryFilePath, nextRecords);
+  await input.runtimeStateStore.syncDerivedState();
+
+  return executeCommand({
+    runtimeStateStore: input.runtimeStateStore,
+    logger: input.logger,
+    message: input.message,
+    context: input.context,
+    sendReply: input.sendReply,
+    registryReady: true,
+    commandName: 'superadmin.add',
+    reason:
+      existingManagedByNumber?.isActive
+        ? 'already_active'
+        : existingManagedByNumber
+          ? 'super_admin_activated'
+          : 'super_admin_added',
+    replyText: existingManagedByNumber ? `SUPER_ADMIN_ON ${displayName}` : `SUPER_ADMIN_ADDED ${displayName}`,
+  });
+}
+
+async function handleManagedSuperAdminStatusCommand(input: {
+  runtimeStateStore: RuntimeStateStore;
+  logger: Logger;
+  message: WAMessage;
+  context: CommandExecutionContext;
+  sendReply(chatJid: string, text: string, quotedMessage: WAMessage): Promise<void>;
+  targetInput: string | null;
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null;
+  managedSuperAdminRecords: Map<string, ManagedSuperAdminRecord>;
+}): Promise<CommandResult> {
+  const resolved = resolveAdminTarget({
+    rawInput: input.targetInput,
+    registryRecords: new Map(),
+    superAdminProfiles: buildAllSuperAdminProfiles(input.founderSuperAdminProfile, input.managedSuperAdminRecords),
+  });
+  if (!resolved.ok || resolved.target.kind !== 'super_admin') {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: 'superadmin.status',
+      reason: resolved.ok ? 'admin_not_found' : resolved.reason,
+      replyText: buildRejectedReply(resolved.ok ? 'admin_not_found' : resolved.reason),
+    });
+  }
+
+  const isFounder = input.founderSuperAdminProfile?.normalizedPhoneNumber === resolved.target.normalizedPhoneNumber;
+  const isActive = isFounder ? true : (input.managedSuperAdminRecords.get(resolved.target.normalizedPhoneNumber)?.isActive ?? false);
+  const roleLabel = isFounder ? 'founder' : 'manager';
+
+  return executeCommand({
+    runtimeStateStore: input.runtimeStateStore,
+    logger: input.logger,
+    message: input.message,
+    context: input.context,
+    sendReply: input.sendReply,
+    registryReady: true,
+    commandName: 'superadmin.status',
+    reason: 'status_reported',
+    replyText: `SUPER_ADMIN_STATUS ${resolved.target.displayName} role:${roleLabel} active:${isActive ? 'on' : 'off'}`,
+  });
+}
+
+async function handleManagedSuperAdminUpdateCommand(input: {
+  action: 'superadmin.on' | 'superadmin.off' | 'superadmin.remove';
+  config: AppConfig;
+  runtimeStateStore: RuntimeStateStore;
+  logger: Logger;
+  message: WAMessage;
+  context: CommandExecutionContext;
+  sendReply(chatJid: string, text: string, quotedMessage: WAMessage): Promise<void>;
+  targetInput: string | null;
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null;
+  managedSuperAdminRecords: Map<string, ManagedSuperAdminRecord>;
+}): Promise<CommandResult> {
+  const resolved = resolveAdminTarget({
+    rawInput: input.targetInput,
+    registryRecords: new Map(),
+    superAdminProfiles: buildAllSuperAdminProfiles(input.founderSuperAdminProfile, input.managedSuperAdminRecords),
+  });
+  if (!resolved.ok || resolved.target.kind !== 'super_admin') {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: input.action,
+      reason: resolved.ok ? 'admin_not_found' : resolved.reason,
+      replyText: buildRejectedReply(resolved.ok ? 'admin_not_found' : resolved.reason),
+    });
+  }
+
+  if (input.founderSuperAdminProfile?.normalizedPhoneNumber === resolved.target.normalizedPhoneNumber) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: input.action,
+      reason: 'super_admin_protected',
+      replyText: 'SUPER_ADMIN_PROTECTED',
+    });
+  }
+
+  const current = input.managedSuperAdminRecords.get(resolved.target.normalizedPhoneNumber);
+  if (!current) {
+    return rejectCommand({
+      runtimeStateStore: input.runtimeStateStore,
+      logger: input.logger,
+      message: input.message,
+      context: input.context,
+      sendReply: input.sendReply,
+      registryReady: true,
+      commandName: input.action,
+      reason: 'admin_not_found',
+      replyText: 'ADMIN_NOT_FOUND',
+    });
+  }
+
+  const records = [...input.managedSuperAdminRecords.values()];
+  const now = new Date().toISOString();
+  let nextRecords = records;
+  let reason: CommandExecutionReason;
+  let replyText: string;
+
+  if (input.action === 'superadmin.on') {
+    const nextRecord = current.isActive
+      ? current
+      : {
+          ...current,
+          isActive: true,
+          updatedAt: now,
+          source: 'super_admin_command',
+        };
+    nextRecords = upsertManagedSuperAdminRecord(records, nextRecord);
+    reason = current.isActive ? 'already_active' : 'super_admin_activated';
+    replyText = `SUPER_ADMIN_ON ${current.displayName}`;
+  } else if (input.action === 'superadmin.off') {
+    const nextRecord = current.isActive
+      ? {
+          ...current,
+          isActive: false,
+          updatedAt: now,
+          source: 'super_admin_command',
+        }
+      : current;
+    nextRecords = upsertManagedSuperAdminRecord(records, nextRecord);
+    reason = current.isActive ? 'super_admin_deactivated' : 'already_inactive';
+    replyText = `SUPER_ADMIN_OFF ${current.displayName}`;
+  } else {
+    nextRecords = records.filter((record) => record.normalizedPhoneNumber !== current.normalizedPhoneNumber);
+    reason = 'super_admin_removed';
+    replyText = `SUPER_ADMIN_REMOVED ${current.displayName}`;
+  }
+
+  await writeManagedSuperAdminRegistry(input.config.superAdminRegistryFilePath, nextRecords);
+  await input.runtimeStateStore.syncDerivedState();
+
+  return executeCommand({
+    runtimeStateStore: input.runtimeStateStore,
+    logger: input.logger,
+    message: input.message,
+    context: input.context,
+    sendReply: input.sendReply,
+    registryReady: true,
+    commandName: input.action,
+    reason,
+    replyText,
   });
 }
 
@@ -892,7 +1300,8 @@ function buildContext(message: WAMessage, accessDecision: AccessDecision): Comma
 }
 
 function buildAdminListReply(
-  superAdminProfiles: ReturnType<typeof getOfficialSuperAdminProfiles>,
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null,
+  managedSuperAdminRecords: ManagedSuperAdminRecord[],
   records: DynamicAdminRecord[],
 ): string {
   const dynamicAdminLines =
@@ -904,9 +1313,37 @@ function buildAdminListReply(
 
   return [
     'SUPER_ADMIN',
-    ...superAdminProfiles.map((profile) => `- ${profile.displayName} dm:on group:on`),
+    ...(founderSuperAdminProfile ? [`- ${founderSuperAdminProfile.displayName} founder:on`] : []),
+    ...managedSuperAdminRecords
+      .sort((left, right) => left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase()))
+      .map((record) => `- ${record.displayName} command:${record.isActive ? 'on' : 'off'}`),
     'ADMIN',
     ...dynamicAdminLines,
+  ].join('\n');
+}
+
+function buildSuperAdminListReply(
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null,
+  managedSuperAdminRecords: ManagedSuperAdminRecord[],
+): string {
+  return [
+    'SUPER_ADMIN',
+    ...(founderSuperAdminProfile ? [`- ${founderSuperAdminProfile.displayName} founder:on`] : []),
+    ...managedSuperAdminRecords
+      .sort((left, right) => left.displayName.toLowerCase().localeCompare(right.displayName.toLowerCase()))
+      .map((record) => `- ${record.displayName} command:${record.isActive ? 'on' : 'off'}`),
+  ].join('\n');
+}
+
+function buildSuperAdminHelpText(): string {
+  return [
+    'SuperAdmin help:',
+    '- SuperAdmin list',
+    '- SuperAdmin status <nama|nomor|nama nomor>',
+    '- SuperAdmin add <nama> <nomor>',
+    '- SuperAdmin on <nama|nomor|nama nomor>',
+    '- SuperAdmin off <nama|nomor|nama nomor>',
+    '- SuperAdmin remove <nama|nomor|nama nomor>',
   ].join('\n');
 }
 
@@ -934,6 +1371,8 @@ function buildRejectedReply(reason: CommandExecutionReason): string {
       return 'TARGET_AMBIGUOUS';
     case 'super_admin_protected':
       return 'SUPER_ADMIN_PROTECTED';
+    case 'founder_only':
+      return 'FOUNDER_ONLY';
     case 'registry_not_ready':
       return 'REGISTRY_NOT_READY';
     case 'prompt_registry_not_ready':
@@ -963,6 +1402,52 @@ function buildRejectedReply(reason: CommandExecutionReason): string {
     default:
       return 'INTERNAL_ERROR';
   }
+}
+
+function buildActiveSuperAdminProfiles(
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null,
+  managedSuperAdmins: {
+    superAdmins: Map<string, ManagedSuperAdminRecord>;
+  },
+): OfficialSuperAdminProfile[] {
+  return buildAllSuperAdminProfiles(founderSuperAdminProfile, managedSuperAdmins.superAdmins).filter((profile) =>
+    founderSuperAdminProfile?.normalizedPhoneNumber === profile.normalizedPhoneNumber ||
+    managedSuperAdmins.superAdmins.get(profile.normalizedPhoneNumber)?.isActive,
+  );
+}
+
+function buildAllSuperAdminProfiles(
+  founderSuperAdminProfile: OfficialSuperAdminProfile | null,
+  managedSuperAdminRecords: Map<string, ManagedSuperAdminRecord>,
+): OfficialSuperAdminProfile[] {
+  return [
+    ...(founderSuperAdminProfile ? [founderSuperAdminProfile] : []),
+    ...[...managedSuperAdminRecords.values()].map((record) => ({
+      normalizedPhoneNumber: record.normalizedPhoneNumber,
+      displayName: record.displayName,
+      nameKey: record.nameKey,
+    })),
+  ];
+}
+
+function isFounderOnlyCommand(commandName: AdminCommandName): boolean {
+  return [
+    'superadmin.add',
+    'superadmin.on',
+    'superadmin.off',
+    'superadmin.remove',
+    'admin.off',
+    'admin.remove',
+    'admin.dm.off',
+    'admin.group.off',
+  ].includes(commandName);
+}
+
+function isFounderActor(
+  normalizedSender: string | null,
+  founderSuperAdminNumber: string,
+): boolean {
+  return normalizedSender === founderSuperAdminNumber;
 }
 
 function upsertRecord(records: DynamicAdminRecord[], nextRecord: DynamicAdminRecord): DynamicAdminRecord[] {

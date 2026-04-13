@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 
 import type { DynamicAdminRegistryInspection } from '../src/access/admin-registry.js';
 import type { OfficialGroupWhitelistInspection } from '../src/access/official-group-whitelist.js';
+import type { ManagedSuperAdminRegistryInspection } from '../src/access/super-admin-registry.js';
 import { evaluateAccessPolicy } from '../src/access/access-policy.js';
 import type { RuntimeIdentityResolutionSnapshot } from '../src/whatsapp/types.js';
 
-test('access policy always allows official super admin in DM', () => {
+test('access policy always allows active managed super admin in DM', () => {
   const decision = evaluateAccessPolicy(
     buildIdentity({
       normalizedSender: '201507007785',
@@ -15,7 +16,8 @@ test('access policy always allows official super admin in DM', () => {
       isGroup: false,
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: managedSuperAdminsWith('201507007785', true),
       registry: emptyRegistry(),
       officialGroup: officialGroup(),
     },
@@ -23,11 +25,11 @@ test('access policy always allows official super admin in DM', () => {
 
   assert.equal(decision.isAllowed, true);
   assert.equal(decision.role, 'super_admin');
-  assert.equal(decision.reason, 'official_super_admin');
+  assert.equal(decision.reason, 'active_dynamic_super_admin');
   assert.equal(decision.chatContextType, 'dm');
 });
 
-test('access policy allows official super admin in official group and denies other groups', () => {
+test('access policy allows active managed super admin in official group and denies other groups', () => {
   const allowed = evaluateAccessPolicy(
     buildIdentity({
       chatJid: '120363408735885184@g.us',
@@ -39,7 +41,8 @@ test('access policy allows official super admin in official group and denies oth
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: managedSuperAdminsWith('201507007785', true),
       registry: emptyRegistry(),
       officialGroup: officialGroup(),
     },
@@ -55,20 +58,59 @@ test('access policy allows official super admin in official group and denies oth
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: managedSuperAdminsWith('201507007785', true),
       registry: emptyRegistry(),
       officialGroup: officialGroup(),
     },
   );
 
   assert.equal(allowed.isAllowed, true);
-  assert.equal(allowed.reason, 'official_super_admin');
+  assert.equal(allowed.reason, 'active_dynamic_super_admin');
   assert.equal(allowed.chatAccessReason, 'official_group');
 
   assert.equal(denied.isAllowed, false);
   assert.equal(denied.role, 'super_admin');
   assert.equal(denied.reason, 'group_not_whitelisted');
   assert.equal(denied.chatAccessReason, 'group_not_whitelisted');
+});
+
+test('access policy allows active managed super admin and denies inactive one honestly', () => {
+  const allowed = evaluateAccessPolicy(
+    buildIdentity({
+      normalizedSender: '628111222333',
+      senderJid: '628111222333@s.whatsapp.net',
+      isGroup: false,
+    }),
+    {
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: managedSuperAdminsWith('628111222333', true),
+      registry: emptyRegistry(),
+      officialGroup: officialGroup(),
+    },
+  );
+
+  const denied = evaluateAccessPolicy(
+    buildIdentity({
+      normalizedSender: '628111222333',
+      senderJid: '628111222333@s.whatsapp.net',
+      isGroup: false,
+    }),
+    {
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: managedSuperAdminsWith('628111222333', false),
+      registry: emptyRegistry(),
+      officialGroup: officialGroup(),
+    },
+  );
+
+  assert.equal(allowed.isAllowed, true);
+  assert.equal(allowed.role, 'super_admin');
+  assert.equal(allowed.reason, 'active_dynamic_super_admin');
+
+  assert.equal(denied.isAllowed, false);
+  assert.equal(denied.role, 'non_admin');
+  assert.equal(denied.reason, 'not_in_whitelist');
 });
 
 test('access policy allows dynamic admin in DM and official group when both access modes are enabled', () => {
@@ -79,7 +121,8 @@ test('access policy allows dynamic admin in DM and official group when both acce
       isGroup: false,
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: true, group: true }),
       officialGroup: officialGroup(),
     },
@@ -95,7 +138,8 @@ test('access policy allows dynamic admin in DM and official group when both acce
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: true, group: true }),
       officialGroup: officialGroup(),
     },
@@ -115,7 +159,8 @@ test('access policy denies DM when dynamic admin DM mode is disabled but group m
       isGroup: false,
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: false, group: true }),
       officialGroup: officialGroup(),
     },
@@ -131,7 +176,8 @@ test('access policy denies DM when dynamic admin DM mode is disabled but group m
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: false, group: true }),
       officialGroup: officialGroup(),
     },
@@ -157,7 +203,8 @@ test('access policy denies official group when dynamic admin group mode is disab
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: true, group: false }),
       officialGroup: officialGroup(),
     },
@@ -175,7 +222,8 @@ test('access policy denies non-admin outside whitelist honestly', () => {
       senderJid: '628999888777@s.whatsapp.net',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: emptyRegistry(),
       officialGroup: officialGroup(),
     },
@@ -188,7 +236,8 @@ test('access policy denies non-admin outside whitelist honestly', () => {
 
 test('access policy denies unresolved sender honestly', () => {
   const decision = evaluateAccessPolicy(null, {
-    superAdminNumbers: ['6285655002277', '201507007785'],
+    founderSuperAdminNumber: '6285655002277',
+    managedSuperAdmins: emptyManagedSuperAdmins(),
     registry: emptyRegistry(),
     officialGroup: officialGroup(),
   });
@@ -205,7 +254,8 @@ test('access policy denies invalid sender honestly', () => {
       senderJid: '233775120281687@lid',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: emptyRegistry(),
       officialGroup: officialGroup(),
     },
@@ -228,7 +278,8 @@ test('access policy fails closed when official group whitelist is not ready', ()
       source: 'participant',
     }),
     {
-      superAdminNumbers: ['6285655002277', '201507007785'],
+      founderSuperAdminNumber: '6285655002277',
+      managedSuperAdmins: emptyManagedSuperAdmins(),
       registry: registryWith('628111222333', { dm: true, group: true }),
       officialGroup: {
         ready: false,
@@ -266,6 +317,41 @@ function buildIdentity(
     isGroup: false,
     source: 'remote_jid',
     ...overrides,
+  };
+}
+
+function emptyManagedSuperAdmins(): ManagedSuperAdminRegistryInspection {
+  return {
+    ready: true,
+    filePath: 'memory',
+    activeCount: 0,
+    superAdmins: new Map(),
+    superAdminsByNameKey: new Map(),
+    error: null,
+  };
+}
+
+function managedSuperAdminsWith(
+  normalizedPhoneNumber: string,
+  isActive: boolean,
+): ManagedSuperAdminRegistryInspection {
+  const record = {
+    normalizedPhoneNumber,
+    displayName: normalizedPhoneNumber,
+    nameKey: normalizedPhoneNumber,
+    isActive,
+    createdAt: '2026-04-10T00:00:00.000Z',
+    updatedAt: '2026-04-10T00:00:00.000Z',
+    source: 'test',
+  };
+
+  return {
+    ready: true,
+    filePath: 'memory',
+    activeCount: isActive ? 1 : 0,
+    superAdmins: new Map([[normalizedPhoneNumber, record]]),
+    superAdminsByNameKey: new Map([[record.nameKey, record]]),
+    error: null,
   };
 }
 

@@ -1,12 +1,14 @@
 import type { RuntimeIdentityResolutionSnapshot } from '../whatsapp/types.js';
 import type { DynamicAdminRegistryInspection } from './admin-registry.js';
 import type { OfficialGroupWhitelistInspection } from './official-group-whitelist.js';
+import type { ManagedSuperAdminRegistryInspection } from './super-admin-registry.js';
 import type { AccessDecision, AccessReason, AccessRole, ChatAccessReason, ChatContextType } from './types.js';
 
 export function evaluateAccessPolicy(
   resolvedIdentity: RuntimeIdentityResolutionSnapshot | null,
   dependencies: {
-    superAdminNumbers: string[];
+    founderSuperAdminNumber: string;
+    managedSuperAdmins: ManagedSuperAdminRegistryInspection;
     registry: DynamicAdminRegistryInspection;
     officialGroup: OfficialGroupWhitelistInspection;
   },
@@ -48,7 +50,7 @@ export function evaluateAccessPolicy(
     });
   }
 
-  if (dependencies.superAdminNumbers.includes(resolvedIdentity.normalizedSender)) {
+  if (resolvedIdentity.normalizedSender === dependencies.founderSuperAdminNumber) {
     if (!chatAccess.chatAccessAllowed) {
       return buildDecision({
         evaluatedAt,
@@ -71,6 +73,41 @@ export function evaluateAccessPolicy(
       isAllowed: true,
       role: 'super_admin',
       reason: 'official_super_admin',
+      chatContextType: chatAccess.chatContextType,
+      chatAccessAllowed: chatAccess.chatAccessAllowed,
+      chatAccessReason: chatAccess.chatAccessReason,
+      normalizedSender: resolvedIdentity.normalizedSender,
+      senderJid: resolvedIdentity.senderJid,
+      chatJid: resolvedIdentity.chatJid,
+      isFromSelf: resolvedIdentity.isFromSelf,
+      isGroup: resolvedIdentity.isGroup,
+    });
+  }
+
+  const managedSuperAdmin = dependencies.managedSuperAdmins.superAdmins.get(resolvedIdentity.normalizedSender) ?? null;
+  if (managedSuperAdmin?.isActive) {
+    if (!chatAccess.chatAccessAllowed) {
+      return buildDecision({
+        evaluatedAt,
+        isAllowed: false,
+        role: 'super_admin',
+        reason: mapChatAccessReasonToAccessReason(chatAccess.chatAccessReason),
+        chatContextType: chatAccess.chatContextType,
+        chatAccessAllowed: chatAccess.chatAccessAllowed,
+        chatAccessReason: chatAccess.chatAccessReason,
+        normalizedSender: resolvedIdentity.normalizedSender,
+        senderJid: resolvedIdentity.senderJid,
+        chatJid: resolvedIdentity.chatJid,
+        isFromSelf: resolvedIdentity.isFromSelf,
+        isGroup: resolvedIdentity.isGroup,
+      });
+    }
+
+    return buildDecision({
+      evaluatedAt,
+      isAllowed: true,
+      role: 'super_admin',
+      reason: 'active_dynamic_super_admin',
       chatContextType: chatAccess.chatContextType,
       chatAccessAllowed: chatAccess.chatAccessAllowed,
       chatAccessReason: chatAccess.chatAccessReason,

@@ -1,6 +1,13 @@
 import type { AccessRole } from '../access/types.js';
 
 export type AdminCommandName =
+  | 'superadmin.add'
+  | 'superadmin.remove'
+  | 'superadmin.list'
+  | 'superadmin.on'
+  | 'superadmin.off'
+  | 'superadmin.status'
+  | 'superadmin.help'
   | 'admin.add'
   | 'admin.remove'
   | 'admin.list'
@@ -21,6 +28,11 @@ export type AdminCommandName =
   | 'prompt.remove';
 
 export type CommandExecutionReason =
+  | 'super_admin_added'
+  | 'super_admin_removed'
+  | 'super_admin_activated'
+  | 'super_admin_deactivated'
+  | 'founder_only'
   | 'admin_added'
   | 'admin_removed'
   | 'admin_activated'

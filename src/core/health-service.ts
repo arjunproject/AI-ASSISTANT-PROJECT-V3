@@ -86,6 +86,7 @@ export interface HealthReport {
   lastAccessDecisionRole: 'super_admin' | 'admin' | 'non_admin' | null;
   lastAccessDecisionReason:
     | 'official_super_admin'
+    | 'active_dynamic_super_admin'
     | 'active_dynamic_admin'
     | 'dm_access_disabled'
     | 'group_access_disabled'

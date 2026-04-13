@@ -4,6 +4,8 @@ import { dirname } from 'node:path';
 import type { AppConfig } from '../config/app-config.js';
 import { inspectGoogleSheetsConfig } from '../config/google-sheets-config.js';
 import { inspectDynamicAdminRegistry } from '../access/admin-registry.js';
+import { getManagedSeedSuperAdminProfiles } from '../access/super-admin-seed.js';
+import { inspectManagedSuperAdminRegistry } from '../access/super-admin-registry.js';
 import { inspectDynamicPromptRegistryFiles } from '../ai/dynamic-prompt-registry.js';
 import { inspectImageGatewayConfig } from '../ai/openai-image-gateway.js';
 import { inspectVoiceGatewayConfig } from '../ai/openai-voice-gateway.js';
@@ -99,6 +101,10 @@ export async function readRuntimeStateSnapshot(
   );
   const sessionInspection = await inspectSessionStore(config.whatsappAuthDir);
   const accessInspection = await inspectDynamicAdminRegistry(config.accessRegistryFilePath);
+  const managedSuperAdminInspection = await inspectManagedSuperAdminRegistry({
+    registryFilePath: config.superAdminRegistryFilePath,
+    seededProfiles: getManagedSeedSuperAdminProfiles(config.superAdminNumbers),
+  });
   const officialGroupInspection = await inspectOfficialGroupWhitelist(config.officialGroupWhitelistFilePath);
   const aiInspection = inspectAiGatewayConfig(config);
   const voiceInspection = inspectVoiceGatewayConfig(config);
@@ -143,7 +149,7 @@ export async function readRuntimeStateSnapshot(
     whatsappTransportMode: config.whatsappTransportMode,
     sessionStoreReady: sessionInspection.ready,
     sessionPresent: sessionInspection.present,
-    accessGateReady: accessInspection.ready && officialGroupInspection.ready,
+    accessGateReady: accessInspection.ready && managedSuperAdminInspection.ready && officialGroupInspection.ready,
     officialGroupWhitelistReady: officialGroupInspection.ready,
     officialGroupJid: officialGroupInspection.group?.groupJid ?? null,
     officialGroupName: officialGroupInspection.group?.groupName ?? null,
@@ -175,7 +181,7 @@ export async function readRuntimeStateSnapshot(
     lastDynamicPromptError: dynamicPromptInspection.error,
     webSearchReady: aiInspection.webSearchReady,
     activeDynamicAdminCount: accessInspection.activeCount,
-    superAdminCount: config.superAdminNumbers.length,
+    superAdminCount: 1 + managedSuperAdminInspection.activeCount,
     qrFilePath: config.whatsappQrFilePath,
     qrState: qrFileExists ? storedSnapshot?.qrState ?? 'generated' : storedSnapshot?.qrState ?? 'not_requested',
   };
@@ -215,6 +221,13 @@ export async function readRuntimeStateSnapshot(
     snapshot = {
       ...snapshot,
       lastError: accessInspection.error,
+    };
+  }
+
+  if (!managedSuperAdminInspection.ready && managedSuperAdminInspection.error) {
+    snapshot = {
+      ...snapshot,
+      lastError: snapshot.lastError ?? managedSuperAdminInspection.error,
     };
   }
 

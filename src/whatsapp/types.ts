@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config/app-config.js';
+import { getManagedSeedSuperAdminProfiles } from '../access/super-admin-seed.js';
 import type { AccessReason, AccessRole, ChatAccessReason } from '../access/types.js';
 import type { AdminCommandName, CommandExecutionReason } from '../command/types.js';
 
@@ -317,7 +318,7 @@ export function buildDefaultRuntimeState(config: AppConfig): RuntimeStateSnapsho
     lastContextUpdatedAt: null,
     activeConversationCount: 0,
     activeDynamicAdminCount: 0,
-    superAdminCount: config.superAdminNumbers.length,
+    superAdminCount: 1 + getManagedSeedSuperAdminProfiles(config.superAdminNumbers).length,
     lastDecryptIssue: null,
     lastDecryptIssueAt: null,
     lastSessionIssue: null,

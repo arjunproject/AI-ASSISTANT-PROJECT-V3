@@ -6,6 +6,8 @@ import type { RuntimeStateStore } from '../runtime/runtime-state-store.js';
 import type { RuntimeIdentityResolutionSnapshot } from '../whatsapp/types.js';
 import { inspectDynamicAdminRegistry } from './admin-registry.js';
 import { inspectOfficialGroupWhitelist } from './official-group-whitelist.js';
+import { getFounderSuperAdminNumber, getManagedSeedSuperAdminProfiles } from './super-admin-seed.js';
+import { inspectManagedSuperAdminRegistry } from './super-admin-registry.js';
 import { evaluateAccessPolicy } from './access-policy.js';
 import type { AccessDecision } from './types.js';
 
@@ -26,9 +28,14 @@ export function createAccessController(dependencies: {
   return {
     async evaluateMessageAccess(message, resolvedIdentity) {
       const registry = await inspectDynamicAdminRegistry(config.accessRegistryFilePath);
+      const managedSuperAdmins = await inspectManagedSuperAdminRegistry({
+        registryFilePath: config.superAdminRegistryFilePath,
+        seededProfiles: getManagedSeedSuperAdminProfiles(config.superAdminNumbers),
+      });
       const officialGroup = await inspectOfficialGroupWhitelist(config.officialGroupWhitelistFilePath);
       const decision = evaluateAccessPolicy(resolvedIdentity, {
-        superAdminNumbers: config.superAdminNumbers,
+        founderSuperAdminNumber: getFounderSuperAdminNumber(config.superAdminNumbers),
+        managedSuperAdmins,
         registry,
         officialGroup,
       });
@@ -55,10 +62,20 @@ export function createAccessController(dependencies: {
         });
       }
 
+      if (!managedSuperAdmins.ready && managedSuperAdmins.error) {
+        logger.warn('access.error', {
+          messageId,
+          senderJid: resolvedIdentity?.senderJid ?? null,
+          normalizedSender: resolvedIdentity?.normalizedSender ?? null,
+          message: managedSuperAdmins.error,
+          registryFilePath: config.superAdminRegistryFilePath,
+        });
+      }
+
       await runtimeStateStore.update({
-        accessGateReady: registry.ready && officialGroup.ready,
+        accessGateReady: registry.ready && managedSuperAdmins.ready && officialGroup.ready,
         activeDynamicAdminCount: registry.activeCount,
-        superAdminCount: config.superAdminNumbers.length,
+        superAdminCount: 1 + managedSuperAdmins.activeCount,
         officialGroupWhitelistReady: officialGroup.ready,
         officialGroupJid: officialGroup.group?.groupJid ?? null,
         officialGroupName: officialGroup.group?.groupName ?? null,

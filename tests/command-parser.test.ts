@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 
 import type { WAMessage } from '@whiskeysockets/baileys';
 
-import { parseAdminCommandMessage, parseOfficialCommandMessage, parsePromptCommandMessage } from '../src/command/command-parser.js';
+import {
+  parseAdminCommandMessage,
+  parseOfficialCommandMessage,
+  parsePromptCommandMessage,
+  parseSuperAdminCommandMessage,
+} from '../src/command/command-parser.js';
 
 test('command parser normalizes slash, case, spacing, and separators into one canonical command', () => {
   const variants = [
@@ -83,6 +88,26 @@ test('command parser recognizes prompt commands through official parser', () => 
   if (parsed.kind === 'command') {
     assert.equal(parsed.parsed.definition.name, 'prompt.list');
     assert.equal(parsed.parsed.definition.canonical, 'prompt list');
+  }
+});
+
+test('command parser recognizes superadmin commands through official parser', () => {
+  const parsed = parseOfficialCommandMessage(buildMessage('SuperAdmin off 201507007785'));
+
+  assert.equal(parsed.kind, 'command');
+  if (parsed.kind === 'command') {
+    assert.equal(parsed.parsed.definition.name, 'superadmin.off');
+    assert.equal(parsed.parsed.definition.canonical, 'superadmin off');
+    assert.equal(parsed.parsed.rawArgsText, '201507007785');
+  }
+});
+
+test('command parser recognizes direct superadmin parser path honestly', () => {
+  const parsed = parseSuperAdminCommandMessage(buildMessage('superadmin list'));
+
+  assert.equal(parsed.kind, 'command');
+  if (parsed.kind === 'command') {
+    assert.equal(parsed.parsed.definition.name, 'superadmin.list');
   }
 });
 

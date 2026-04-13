@@ -17,6 +17,7 @@ export interface AppConfig {
   packageJsonPath: string;
   runtimeStateFilePath: string;
   accessRegistryFilePath: string;
+  superAdminRegistryFilePath: string;
   officialGroupWhitelistFilePath: string;
   dynamicPromptRegistryFilePath: string;
   dynamicPromptAuditFilePath: string;
@@ -85,6 +86,12 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     overrides.accessRegistryFilePath ??
       process.env.APP_ADMIN_REGISTRY_FILE ??
       join(sharedRuntimeRootInput, 'access', 'admin-registry.json'),
+  );
+  const superAdminRegistryFilePath = resolveFromProject(
+    projectRoot,
+    overrides.superAdminRegistryFilePath ??
+      process.env.APP_SUPER_ADMIN_REGISTRY_FILE ??
+      join(sharedRuntimeRootInput, 'access', 'super-admin-registry.json'),
   );
   const officialGroupWhitelistFilePath = resolveFromProject(
     projectRoot,
@@ -201,6 +208,7 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     packageJsonPath,
     runtimeStateFilePath,
     accessRegistryFilePath,
+    superAdminRegistryFilePath,
     officialGroupWhitelistFilePath,
     dynamicPromptRegistryFilePath,
     dynamicPromptAuditFilePath,

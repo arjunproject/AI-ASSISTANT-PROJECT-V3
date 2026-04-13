@@ -5,9 +5,14 @@ import { findAdminCommandDefinition, findPromptCommandDefinition } from './comma
 import type { CommandParseResult } from './types.js';
 
 const POSTFIX_ACTIONS = new Set(['status', 'on', 'off', 'remove']);
+const PREFIXES = ['admin', 'prompt', 'superadmin'] as const;
 
 export function parseAdminCommandMessage(message: WAMessage): CommandParseResult {
   return parseCommandMessage(message, 'admin');
+}
+
+export function parseSuperAdminCommandMessage(message: WAMessage): CommandParseResult {
+  return parseCommandMessage(message, 'superadmin');
 }
 
 export function parsePromptCommandMessage(message: WAMessage): CommandParseResult {
@@ -20,10 +25,15 @@ export function parseOfficialCommandMessage(message: WAMessage): CommandParseRes
     return adminResult;
   }
 
+  const superAdminResult = parseSuperAdminCommandMessage(message);
+  if (superAdminResult.kind !== 'not_command') {
+    return superAdminResult;
+  }
+
   return parsePromptCommandMessage(message);
 }
 
-function parseCommandMessage(message: WAMessage, prefix: 'admin' | 'prompt'): CommandParseResult {
+function parseCommandMessage(message: WAMessage, prefix: typeof PREFIXES[number]): CommandParseResult {
   const rawText = extractCommandMessageText(message.message);
   if (!rawText) {
     return {
@@ -124,7 +134,7 @@ function sanitizeAdminCommandText(value: string): string {
 function findActionFirstMatch(
   tokens: string[],
   rawTokens: string[],
-  prefix: 'admin' | 'prompt',
+  prefix: typeof PREFIXES[number],
 ): {
   canonical: string;
   argsText: string | null;
