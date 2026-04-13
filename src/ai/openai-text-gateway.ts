@@ -32,7 +32,7 @@ const LEGACY_CAPABILITY_REPAIR_MESSAGE =
 const LEGACY_NO_SPREADSHEET_CAPABILITY_REPAIR_MESSAGE =
   'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau menyambungkan sumber data lain. Jika kanal ini memang tidak punya akses ke spreadsheet resmi proyek, jawab jujur singkat bahwa akses baca data resmi tidak tersedia di bot ini. Jangan mengarang bahwa kamu bisa membaca data resmi bila tool tidak tersedia.';
 const DATA_PRESENTATION_PROMPT =
-  'Untuk jawaban umum, kamu boleh tetap singkat. Tetapi jika kamu sedang menampilkan record data spreadsheet, tampilkan setiap record yang kamu pilih secara utuh dengan seluruh field yang tersedia di record itu. Jangan mengubah satu record menjadi ringkasan satu baris jika itu membuang field penting. Jika hasil panjang, kamu boleh membaginya secara natural, tetapi setiap record yang tampil harus tetap lengkap. Setelah inti jawaban selesai, berhenti. Jangan menambahkan penutup template, CTA generik, tawaran detail/filter lain, atau ajakan Excel/CSV/API kecuali user memang memintanya langsung.';
+  'Untuk jawaban umum, kamu boleh tetap singkat. Tetapi jika kamu sedang menampilkan record data spreadsheet, tampilkan setiap record yang kamu pilih secara utuh dengan seluruh field yang tersedia di record itu. Jangan mengubah satu record menjadi ringkasan satu baris jika itu membuang field penting. Jika hasil panjang, kamu boleh membaginya secara natural, tetapi setiap record yang tampil harus tetap lengkap. Saat menampilkan record STOK MOTOR, jangan awali record dengan numbering buatan seperti 1), 2), atau nomor urut lain. Gunakan hanya nomor resmi yang sudah ada di field NO. Setelah inti jawaban selesai, berhenti. Jangan menambahkan penutup template, CTA generik, tawaran detail/filter lain, atau ajakan Excel/CSV/API kecuali user memang memintanya langsung.';
 
 const COMMON_AI_SYSTEM_PROMPT_LINES = [
   'Kamu adalah asisten chat WhatsApp.',
@@ -323,6 +323,7 @@ function buildAiSystemPrompt(spreadsheetReadEnabled: boolean): string {
     'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
     'Jangan mengarahkan user ke upload file atau koneksi sumber data lain kecuali user memang sedang membahas sumber data di luar spreadsheet resmi proyek.',
     'Jika menampilkan data STOK MOTOR, gunakan nomor resmi dari data, bukan numbering buatan.',
+    'Jangan awali tiap record motor dengan 1), 2), bullet bernomor, atau nomor urut buatan lain. Biarkan field NO menjadi satu-satunya nomor.',
     'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
     'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
     'Jika hasil lebih dari satu dan intent sudah jelas, tampilkan semua hasil yang relevan tanpa bertanya berulang.',

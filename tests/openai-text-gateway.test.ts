@@ -652,6 +652,7 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   assert.equal(Array.isArray(requests[1]?.input), true);
   assert.match(String(requests[1]?.instructions ?? ''), /tampilkan setiap record yang kamu pilih secara utuh/i);
   assert.match(String(requests[1]?.instructions ?? ''), /jangan menambahkan penutup template/i);
+  assert.match(String(requests[1]?.instructions ?? ''), /jangan awali record dengan numbering buatan seperti 1\), 2\)/i);
   assert.equal(response.dataRead!.used, true);
   assert.equal(response.dataRead!.toolCallCount, 1);
   assert.deepEqual(response.dataRead!.sheetNames, ['STOK MOTOR']);
