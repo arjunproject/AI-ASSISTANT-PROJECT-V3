@@ -585,7 +585,7 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
               {
                 type: 'function_call',
                 name: 'read_spreadsheet_data',
-                arguments: '{"sheet":"STOK MOTOR","includeSold":false,"limit":null,"filters":null}',
+                arguments: '{"sheet":"STOK MOTOR","query":null,"includeSold":false,"limit":null,"filters":null}',
                 call_id: 'call-1',
               },
             ],
@@ -642,7 +642,7 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   assert.equal(requests[0]?.tools?.some((tool: { name?: string }) => tool.name === 'read_spreadsheet_data'), true);
   assert.deepEqual(
     requests[0]?.tools?.[0]?.parameters?.required ?? null,
-    ['sheet', 'includeSold', 'limit', 'filters'],
+    ['sheet', 'query', 'includeSold', 'limit', 'filters'],
   );
   assert.deepEqual(
     requests[0]?.tools?.[0]?.parameters?.properties?.filters?.items?.required ?? null,
@@ -650,6 +650,8 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   );
   assert.equal(requests[1]?.previous_response_id, 'resp-1');
   assert.equal(Array.isArray(requests[1]?.input), true);
+  assert.match(String(requests[1]?.instructions ?? ''), /tampilkan setiap record yang kamu pilih secara utuh/i);
+  assert.match(String(requests[1]?.instructions ?? ''), /jangan menambahkan penutup template/i);
   assert.equal(response.dataRead!.used, true);
   assert.equal(response.dataRead!.toolCallCount, 1);
   assert.deepEqual(response.dataRead!.sheetNames, ['STOK MOTOR']);
@@ -680,7 +682,7 @@ test('ai gateway repairs legacy spreadsheet fallback replies with a second model
               {
                 type: 'function_call',
                 name: 'read_spreadsheet_data',
-                arguments: '{"sheet":"STOK MOTOR","includeSold":false,"limit":null,"filters":[{"field":"NAMA MOTOR","operator":"contains","value":"sonic"}]}',
+                arguments: '{"sheet":"STOK MOTOR","query":"sonic","includeSold":false,"limit":null,"filters":[{"field":"NAMA MOTOR","operator":"contains","value":"sonic"}]}',
                 call_id: 'call-repair-1',
               },
             ],
@@ -728,4 +730,93 @@ test('ai gateway repairs legacy spreadsheet fallback replies with a second model
   assert.equal(response.dataRead!.used, true);
   assert.equal(requests.length, 3);
   assert.match(String(requests[1]?.instructions ?? ''), /jangan bilang user harus kirim spreadsheet lagi/i);
+});
+
+test('ai gateway retries data-heavy spreadsheet replies with a higher token budget when first reply is incomplete', async () => {
+  const config = loadAppConfig({
+    projectRoot: process.cwd(),
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'test-model',
+    aiRequestTimeoutMs: 5_000,
+  });
+
+  const requests: Array<Record<string, any>> = [];
+  const fakeClient = {
+    responses: {
+      async create(request: Record<string, any>) {
+        requests.push(request);
+        if (requests.length === 1) {
+          return {
+            id: 'resp-data-1',
+            output: [
+              {
+                type: 'function_call',
+                name: 'read_spreadsheet_data',
+                arguments: '{"sheet":"STOK MOTOR","query":"ready","includeSold":false,"limit":null,"filters":null}',
+                call_id: 'call-data-1',
+              },
+            ],
+          };
+        }
+
+        if (requests.length === 2) {
+          return {
+            status: 'incomplete',
+            incomplete_details: {
+              reason: 'max_output_tokens',
+            },
+            output: [
+              {
+                type: 'reasoning',
+                summary: [],
+              },
+            ],
+            output_text: '',
+          };
+        }
+
+        return {
+          output_text: 'Daftar stok berhasil dibacakan lengkap.',
+        };
+      },
+    },
+  };
+
+  const gateway = createOpenAiTextGateway(config, {
+    client: fakeClient as never,
+    dataProvider: {
+      async readData() {
+        return {
+          spreadsheetName: 'Arjun Motor Project',
+          sheetName: 'STOK MOTOR',
+          headers: ['NO', 'NAMA MOTOR', 'STATUS'],
+          rows: Array.from({ length: 12 }, (_, index) => ({
+            NO: String(index + 1),
+            'NAMA MOTOR': `Motor ${index + 1}`,
+            STATUS: 'READY',
+          })),
+          rowCount: 12,
+          filteredRowCount: 12,
+          error: null,
+        };
+      },
+    },
+  });
+
+  const response = await gateway.generateReply({
+    userText: 'Tampilkan stok motor yang ready.',
+    inputMode: 'text',
+    chatJid: '6285655002277@s.whatsapp.net',
+    senderJid: '6285655002277@s.whatsapp.net',
+    normalizedSender: '6285655002277',
+    summary: null,
+    transcript: [],
+    webSearchAvailable: false,
+    dynamicPromptOverlay: null,
+  });
+
+  assert.equal(response.text, 'Daftar stok berhasil dibacakan lengkap.');
+  assert.equal(requests.length, 3);
+  assert.equal(requests[1]?.max_output_tokens, 2200);
+  assert.equal(requests[2]?.max_output_tokens, 3200);
 });

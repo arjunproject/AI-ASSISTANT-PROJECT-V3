@@ -21,6 +21,7 @@ import { createAdminCommandExecutor } from '../command/admin-command-executor.js
 import { createBaileysDiagnosticLogger, type BaileysDiagnosticEntry } from './baileys-log-bridge.js';
 import { resolveSenderIdentity, type SenderIdentityContext } from './identity-resolver.js';
 import { createInboundMessageListener, isUserFacingMessage } from './inbound-listener.js';
+import { splitOutgoingText } from './message-chunker.js';
 import { createRuntimeMessageStore } from './message-store.js';
 import { createQrManager } from './qr-manager.js';
 import { createReconnectManager } from './reconnect-manager.js';
@@ -76,11 +77,7 @@ export async function startBaileysTransport(
     logger,
     runtimeStateStore,
     async sendReply(chatJid, text, quotedMessage) {
-      if (!activeSocket) {
-        throw new Error('WhatsApp socket is not available for AI reply.');
-      }
-
-      await activeSocket.sendMessage(chatJid, { text }, { quoted: quotedMessage });
+      await sendChunkedReply(chatJid, text, quotedMessage, 'ai');
     },
     async downloadVoiceMedia(message) {
       if (!activeSocket) {
@@ -108,11 +105,7 @@ export async function startBaileysTransport(
     logger,
     runtimeStateStore,
     async sendReply(chatJid, text, quotedMessage) {
-      if (!activeSocket) {
-        throw new Error('WhatsApp socket is not available for command reply.');
-      }
-
-      await activeSocket.sendMessage(chatJid, { text }, { quoted: quotedMessage });
+      await sendChunkedReply(chatJid, text, quotedMessage, 'command');
     },
   });
   const inboundListener = createInboundMessageListener({
@@ -306,6 +299,35 @@ export async function startBaileysTransport(
     socket.ev.on('message-receipt.update', (updates) => {
       void handleMessageReceiptUpdates(generation, updates);
     });
+  }
+
+  async function sendChunkedReply(
+    chatJid: string,
+    text: string,
+    quotedMessage: WAMessage,
+    source: 'ai' | 'command',
+  ): Promise<void> {
+    if (!activeSocket) {
+      throw new Error('WhatsApp socket is not available for reply.');
+    }
+
+    const chunks = splitOutgoingText(text);
+    logger.info('outbound.packaged', {
+      source,
+      chatJid,
+      chunkCount: chunks.length,
+      textLength: text.length,
+      longestChunkLength: chunks.reduce((longest, chunk) => Math.max(longest, chunk.length), 0),
+    });
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index]!;
+      await activeSocket.sendMessage(
+        chatJid,
+        { text: chunk },
+        index === 0 ? { quoted: quotedMessage } : undefined,
+      );
+    }
   }
 
   async function persistCreds(generation: number): Promise<void> {
