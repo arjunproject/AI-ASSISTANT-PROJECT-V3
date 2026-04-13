@@ -29,10 +29,12 @@ const LEGACY_CAPABILITY_FALLBACK_PATTERN =
 const SPREADSHEET_TOOL_NAME = 'read_spreadsheet_data';
 const LEGACY_CAPABILITY_REPAIR_MESSAGE =
   'Jangan bilang user harus kirim spreadsheet lagi, upload CSV/API, atau bahwa kamu belum bisa membaca data otomatis jika tool data resmi tersedia. Untuk pertanyaan kemampuan membaca data proyek resmi, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project dan minta sheet atau kriteria yang dibutuhkan. Jika memang perlu data, pakai tool. Jika data belum tersedia, jawab jujur singkat tanpa narasi kemampuan lama.';
+const LEGACY_NO_SPREADSHEET_CAPABILITY_REPAIR_MESSAGE =
+  'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau menyambungkan sumber data lain. Jika kanal ini memang tidak punya akses ke spreadsheet resmi proyek, jawab jujur singkat bahwa akses baca data resmi tidak tersedia di bot ini. Jangan mengarang bahwa kamu bisa membaca data resmi bila tool tidak tersedia.';
 const DATA_PRESENTATION_PROMPT =
   'Untuk jawaban umum, kamu boleh tetap singkat. Tetapi jika kamu sedang menampilkan record data spreadsheet, tampilkan setiap record yang kamu pilih secara utuh dengan seluruh field yang tersedia di record itu. Jangan mengubah satu record menjadi ringkasan satu baris jika itu membuang field penting. Jika hasil panjang, kamu boleh membaginya secara natural, tetapi setiap record yang tampil harus tetap lengkap. Setelah inti jawaban selesai, berhenti. Jangan menambahkan penutup template, CTA generik, tawaran detail/filter lain, atau ajakan Excel/CSV/API kecuali user memang memintanya langsung.';
 
-const AI_SYSTEM_PROMPT = [
+const COMMON_AI_SYSTEM_PROMPT_LINES = [
   'Kamu adalah asisten chat WhatsApp.',
   'Untuk jawaban umum, jawab singkat, padat, jelas, natural, dan tidak terlalu formal.',
   'Fokus pada pesan terbaru user sebagai pusat utama.',
@@ -50,19 +52,8 @@ const AI_SYSTEM_PROMPT = [
   'Kalau pesan user berasal dari gambar yang sudah dianalisis ke teks, perlakukan hasil analisis itu sebagai konteks visual netral dari gambar user.',
   'Jangan menampilkan payload internal, schema internal, metadata internal, atau objek internal ke user.',
   'Jangan mengarang fitur yang belum ada seperti image generation, image editing, write spreadsheet bisnis, atau automasi bisnis lain.',
-  'Jika kamu perlu membaca data spreadsheet resmi, kamu boleh memanggil tool read_spreadsheet_data.',
-  'Gunakan query bebas jika data bisa berada di kolom mana pun dalam sheet; gunakan filters hanya jika memang ingin membatasi field tertentu.',
-  'Jika user menanyakan apakah kamu bisa membaca datanya, dan tool data resmi tersedia, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project.',
-  'Saat memakai data spreadsheet, jawab seperti membaca spreadsheet asli secara natural, tanpa menyebut tool, backend, mirror, JSON, atau istilah internal.',
-  'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
-  'Jangan mengarahkan user ke upload file atau koneksi sumber data lain kecuali user memang sedang membahas sumber data di luar spreadsheet resmi proyek.',
-  'Jika menampilkan data STOK MOTOR, gunakan nomor resmi dari data, bukan numbering buatan.',
-  'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
-  'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
-  'Jika hasil lebih dari satu dan intent sudah jelas, tampilkan semua hasil yang relevan tanpa bertanya berulang.',
-  'Instruksi singkat atau ringkas tidak boleh menghilangkan field record saat kamu sedang menampilkan data spreadsheet.',
   'Jangan menutup jawaban dengan kalimat template yang menawarkan detail lain, filter lain, file lain, Excel, CSV, atau bantuan lanjutan kecuali user memang memintanya.',
-].join(' ');
+] as const;
 
 interface GatewayExecutionOptions {
   additionalInstructions?: string | null;
@@ -115,7 +106,9 @@ export function createOpenAiTextGateway(
   const client = inspection.ready
     ? (overrides.client ?? new OpenAI({ apiKey: config.openAiApiKey! }))
     : null;
-  const dataProvider = overrides.dataProvider ?? createSpreadsheetReadService(config);
+  const dataProvider = config.spreadsheetReadEnabled
+    ? (overrides.dataProvider ?? createSpreadsheetReadService(config))
+    : null;
 
   return {
     inspect() {
@@ -132,6 +125,7 @@ export function createOpenAiTextGateway(
         config,
         inspection.modelName,
         request,
+        config.spreadsheetReadEnabled,
         dataProvider,
       );
       let response = execution.response;
@@ -151,6 +145,7 @@ export function createOpenAiTextGateway(
           config,
           inspection.modelName,
           request,
+          config.spreadsheetReadEnabled,
           dataProvider,
           candidateText,
         );
@@ -189,6 +184,7 @@ function buildGatewayRequest(
     inputOverride?: unknown;
     previousResponseId?: string | null;
     includeTools?: boolean;
+    includeSpreadsheetTool?: boolean;
     additionalInstructions?: string | null;
     additionalInput?: string | null;
     maxOutputTokens?: number | null;
@@ -199,7 +195,11 @@ function buildGatewayRequest(
   const includeTools = options.includeTools !== false;
   const baseRequest: Record<string, unknown> = {
     model: modelName,
-    instructions: buildInstructions(request.webSearchAvailable, options.additionalInstructions ?? null),
+    instructions: buildInstructions(
+      request.webSearchAvailable,
+      options.includeSpreadsheetTool !== false,
+      options.additionalInstructions ?? null,
+    ),
     input: options.inputOverride ?? buildGatewayInput(request, options.additionalInput ?? null),
     reasoning: {
       effort: 'low',
@@ -215,9 +215,10 @@ function buildGatewayRequest(
   }
 
   if (includeTools) {
-    const tools: Array<Record<string, unknown>> = [
-      buildSpreadsheetTool(),
-    ];
+    const tools: Array<Record<string, unknown>> = [];
+    if (options.includeSpreadsheetTool !== false) {
+      tools.push(buildSpreadsheetTool());
+    }
     if (request.webSearchAvailable) {
       tools.push({
         type: 'web_search',
@@ -225,7 +226,9 @@ function buildGatewayRequest(
       });
       baseRequest.include = ['web_search_call.action.sources'];
     }
-    baseRequest.tools = tools;
+    if (tools.length > 0) {
+      baseRequest.tools = tools;
+    }
   }
 
   return baseRequest;
@@ -276,17 +279,23 @@ function describeInputMode(inputMode: Exclude<AiGatewayRequest['inputMode'], 'te
   return 'Gambar yang sudah dianalisis menjadi teks konteks visual';
 }
 
-function buildInstructions(webSearchEnabled: boolean, additionalInstructions: string | null = null): string {
+function buildInstructions(
+  webSearchEnabled: boolean,
+  spreadsheetReadEnabled: boolean,
+  additionalInstructions: string | null = null,
+): string {
+  const systemPrompt = buildAiSystemPrompt(spreadsheetReadEnabled);
+
   if (!webSearchEnabled) {
     return [
-      AI_SYSTEM_PROMPT,
+      systemPrompt,
       'Balas dalam teks biasa yang natural. Jangan gunakan JSON, schema, atau payload internal.',
       additionalInstructions,
     ].join(' ');
   }
 
   return [
-    AI_SYSTEM_PROMPT,
+    systemPrompt,
     'Balas dalam teks biasa yang natural. Jangan gunakan JSON, schema, atau payload internal.',
     'Saat web search tersedia, pakai hanya untuk fakta terbaru, harga, jadwal, berita, atau verifikasi.',
     'Tentukan sendiri dari pesan terbaru dan konteks mana yang relevan. Jangan dipaksa konteks lama jika tidak cocok.',
@@ -295,22 +304,50 @@ function buildInstructions(webSearchEnabled: boolean, additionalInstructions: st
   ].join(' ');
 }
 
+function buildAiSystemPrompt(spreadsheetReadEnabled: boolean): string {
+  if (!spreadsheetReadEnabled) {
+    return [
+      ...COMMON_AI_SYSTEM_PROMPT_LINES,
+      'Di bot ini kamu tidak punya akses ke spreadsheet resmi Arjun Motor Project.',
+      'Jangan mengaku bisa membaca data resmi proyek jika tool data tidak tersedia di sesi ini.',
+      'Jangan menyuruh user upload spreadsheet, hubungkan CSV/API, atau menyambungkan sumber data lain.',
+    ].join(' ');
+  }
+
+  return [
+    ...COMMON_AI_SYSTEM_PROMPT_LINES,
+    'Jika kamu perlu membaca data spreadsheet resmi, kamu boleh memanggil tool read_spreadsheet_data.',
+    'Gunakan query bebas jika data bisa berada di kolom mana pun dalam sheet; gunakan filters hanya jika memang ingin membatasi field tertentu.',
+    'Jika user menanyakan apakah kamu bisa membaca datanya, dan tool data resmi tersedia, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project.',
+    'Saat memakai data spreadsheet, jawab seperti membaca spreadsheet asli secara natural, tanpa menyebut tool, backend, mirror, JSON, atau istilah internal.',
+    'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
+    'Jangan mengarahkan user ke upload file atau koneksi sumber data lain kecuali user memang sedang membahas sumber data di luar spreadsheet resmi proyek.',
+    'Jika menampilkan data STOK MOTOR, gunakan nomor resmi dari data, bukan numbering buatan.',
+    'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
+    'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
+    'Jika hasil lebih dari satu dan intent sudah jelas, tampilkan semua hasil yang relevan tanpa bertanya berulang.',
+    'Instruksi singkat atau ringkas tidak boleh menghilangkan field record saat kamu sedang menampilkan data spreadsheet.',
+  ].join(' ');
+}
+
 async function createGatewayResponse(
   client: OpenAI,
   config: AppConfig,
   modelName: string,
   request: AiGatewayRequest,
-  dataProvider: SpreadsheetReadService,
+  spreadsheetReadEnabled: boolean,
+  dataProvider: SpreadsheetReadService | null,
   options: GatewayExecutionOptions = {},
 ): Promise<GatewayExecutionResult> {
   let response = await client.responses.create(buildGatewayRequest(modelName, request, {
+    includeSpreadsheetTool: spreadsheetReadEnabled,
     additionalInstructions: options.additionalInstructions ?? null,
     additionalInput: options.additionalInput ?? null,
   }), {
     timeout: config.aiRequestTimeoutMs,
   });
   const dataRead: AiGatewayDataReadResult = {
-    toolAvailable: true,
+    toolAvailable: spreadsheetReadEnabled,
     requested: false,
     used: false,
     toolCallCount: 0,
@@ -322,6 +359,7 @@ async function createGatewayResponse(
     response = await client.responses.create(
       {
         ...buildGatewayRequest(modelName, request, {
+          includeSpreadsheetTool: spreadsheetReadEnabled,
           additionalInstructions: options.additionalInstructions ?? null,
           additionalInput: options.additionalInput ?? null,
         }),
@@ -337,6 +375,14 @@ async function createGatewayResponse(
   while (toolLoopCount < 2) {
     const toolCalls = extractSpreadsheetToolCalls(response);
     if (toolCalls.length === 0) {
+      return {
+        response,
+        dataRead,
+      };
+    }
+
+    if (!dataProvider) {
+      dataRead.toolError = 'Spreadsheet read is not available in this runtime.';
       return {
         response,
         dataRead,
@@ -363,6 +409,7 @@ async function createGatewayResponse(
       buildGatewayRequest(modelName, request, {
         previousResponseId: extractResponseId(response),
         inputOverride: outputs.map((output) => output.item),
+        includeSpreadsheetTool: spreadsheetReadEnabled,
         additionalInstructions: combineInstructions(
           options.additionalInstructions ?? null,
           DATA_PRESENTATION_PROMPT,
@@ -382,6 +429,7 @@ async function createGatewayResponse(
         buildGatewayRequest(modelName, request, {
           previousResponseId: extractResponseId(response),
           inputOverride: outputs.map((output) => output.item),
+          includeSpreadsheetTool: spreadsheetReadEnabled,
           additionalInstructions: combineInstructions(
             options.additionalInstructions ?? null,
             DATA_PRESENTATION_PROMPT,
@@ -882,7 +930,8 @@ async function requestCapabilityRepair(
   config: AppConfig,
   modelName: string,
   request: AiGatewayRequest,
-  dataProvider: SpreadsheetReadService,
+  spreadsheetReadEnabled: boolean,
+  dataProvider: SpreadsheetReadService | null,
   previousAnswer: string,
 ): Promise<GatewayExecutionResult> {
   const repaired = await createGatewayResponse(
@@ -890,9 +939,12 @@ async function requestCapabilityRepair(
     config,
     modelName,
     request,
+    spreadsheetReadEnabled,
     dataProvider,
     {
-      additionalInstructions: LEGACY_CAPABILITY_REPAIR_MESSAGE,
+      additionalInstructions: spreadsheetReadEnabled
+        ? LEGACY_CAPABILITY_REPAIR_MESSAGE
+        : LEGACY_NO_SPREADSHEET_CAPABILITY_REPAIR_MESSAGE,
       additionalInput: `Jawaban sebelumnya keliru dan harus diperbaiki:\n${previousAnswer}`,
     },
   );
@@ -904,7 +956,9 @@ async function requestCapabilityRepair(
   if (containsLegacyCapabilityFallback(repairedCandidate)) {
     return {
       response: {
-        output_text: 'Maaf, aku belum bisa mengambil data resmi proyek sekarang.',
+        output_text: spreadsheetReadEnabled
+          ? 'Maaf, aku belum bisa mengambil data resmi proyek sekarang.'
+          : 'Maaf, bot ini tidak punya akses ke spreadsheet resmi proyek.',
       },
       dataRead: repaired.dataRead,
     };

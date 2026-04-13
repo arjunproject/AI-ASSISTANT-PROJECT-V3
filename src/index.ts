@@ -6,7 +6,8 @@ import { startRuntime } from './runtime/runtime-service.js';
 
 async function main(): Promise<void> {
   const command = process.argv[2] ?? 'start';
-  const config = loadAppConfig();
+  const runtimeProfile = resolveRuntimeProfileArg(process.argv[3]);
+  const config = loadAppConfig(runtimeProfile ? { runtimeProfile } : {});
 
   if (command === 'health') {
     const report = await collectHealthReport(config);
@@ -24,7 +25,8 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  const config = loadAppConfig();
+  const runtimeProfile = resolveRuntimeProfileArg(process.argv[3], true);
+  const config = loadAppConfig(runtimeProfile ? { runtimeProfile } : {});
   const message = error instanceof Error ? error.message : String(error);
 
   if (error instanceof ProcessLockConflictError || error instanceof ProcessLockMalformedError) {
@@ -42,3 +44,25 @@ void main().catch((error: unknown) => {
   console.error(message);
   process.exitCode = 1;
 });
+
+function resolveRuntimeProfileArg(
+  value: string | undefined,
+  allowUnknown = false,
+): 'primary' | 'secondary' | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'primary' || normalized === 'bot1') {
+    return 'primary';
+  }
+  if (normalized === 'secondary' || normalized === 'bot2') {
+    return 'secondary';
+  }
+  if (allowUnknown) {
+    return undefined;
+  }
+
+  throw new Error(`Unknown runtime profile: ${value}`);
+}

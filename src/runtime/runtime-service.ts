@@ -51,7 +51,9 @@ export async function startRuntime(
   const lock = await acquireRuntimeLock(config, logger);
   const runtimeStateStore = await createRuntimeStateStore(config);
   const transportFactory = dependencies.transportFactory ?? startBaileysTransport;
-  const mirrorSyncFactory = dependencies.mirrorSyncFactory ?? startRuntimeMirrorSync;
+  const mirrorSyncFactory = config.mirrorSyncEnabled
+    ? (dependencies.mirrorSyncFactory ?? startRuntimeMirrorSync)
+    : startDisabledRuntimeMirrorSync;
 
   let transport: RuntimeTransportController;
   try {
@@ -260,6 +262,14 @@ async function startRuntimeMirrorSync(
       if (activeSync) {
         await activeSync;
       }
+    },
+  };
+}
+
+async function startDisabledRuntimeMirrorSync(): Promise<RuntimeMirrorSyncController> {
+  return {
+    async stop() {
+      return undefined;
     },
   };
 }

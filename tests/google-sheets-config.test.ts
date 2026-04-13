@@ -96,3 +96,31 @@ test('google sheets config fails closed when key path does not exist', async () 
     `GOOGLE_SERVICE_ACCOUNT_KEY_PATH does not exist: ${join(temp.root, 'missing-service-account.json')}`,
   );
 });
+
+test('secondary runtime profile shares registry files with primary runtime and disables spreadsheet access by default', async () => {
+  const temp = await createTempRoot('stage-7-bot2-config-');
+  cleanups.push(temp.cleanup);
+
+  const config = loadAppConfig({
+    projectRoot: temp.root,
+    runtimeProfile: 'secondary',
+  });
+  const inspection = await inspectGoogleSheetsConfig(config);
+
+  assert.equal(config.runtimeProfile, 'secondary');
+  assert.equal(config.runtimeRoot, join(temp.root, '.runtime-bot2'));
+  assert.equal(config.whatsappAuthDir, join(temp.root, '.runtime-bot2', 'whatsapp', 'auth'));
+  assert.equal(config.whatsappQrFilePath, join(temp.root, '.runtime-bot2', 'whatsapp', 'qr', 'login-qr.png'));
+  assert.equal(config.accessRegistryFilePath, join(temp.root, '.runtime', 'access', 'admin-registry.json'));
+  assert.equal(
+    config.officialGroupWhitelistFilePath,
+    join(temp.root, '.runtime', 'access', 'official-group-whitelist.json'),
+  );
+  assert.equal(config.dynamicPromptRegistryFilePath, join(temp.root, '.runtime', 'ai', 'dynamic-prompts.json'));
+  assert.equal(config.dynamicPromptAuditFilePath, join(temp.root, '.runtime', 'ai', 'dynamic-prompt-audit.json'));
+  assert.equal(config.botPrimaryNumber, '201507007785');
+  assert.equal(config.spreadsheetReadEnabled, false);
+  assert.equal(config.mirrorSyncEnabled, false);
+  assert.equal(inspection.ready, false);
+  assert.equal(inspection.error, null);
+});

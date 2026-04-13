@@ -820,3 +820,56 @@ test('ai gateway retries data-heavy spreadsheet replies with a higher token budg
   assert.equal(requests[1]?.max_output_tokens, 2200);
   assert.equal(requests[2]?.max_output_tokens, 3200);
 });
+
+test('secondary ai gateway disables spreadsheet tool registration entirely', async () => {
+  const config = loadAppConfig({
+    projectRoot: process.cwd(),
+    runtimeProfile: 'secondary',
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'test-model',
+    aiRequestTimeoutMs: 5_000,
+  });
+
+  let capturedRequest: Record<string, any> | null = null;
+  const fakeClient = {
+    responses: {
+      async create(request: Record<string, any>) {
+        capturedRequest = request;
+        return {
+          output_text: 'Di bot ini aku tidak punya akses ke spreadsheet resmi proyek, tapi aku tetap bisa bantu untuk percakapan umum.',
+        };
+      },
+    },
+  };
+
+  const gateway = createOpenAiTextGateway(config, {
+    client: fakeClient as never,
+    dataProvider: {
+      async readData() {
+        throw new Error('Spreadsheet data provider should stay disabled.');
+      },
+    },
+  });
+
+  const response = await gateway.generateReply({
+    userText: 'Bisa baca data stok motor?',
+    inputMode: 'text',
+    chatJid: '201507007785@s.whatsapp.net',
+    senderJid: '201507007785@s.whatsapp.net',
+    normalizedSender: '201507007785',
+    summary: null,
+    transcript: [],
+    webSearchAvailable: false,
+    dynamicPromptOverlay: null,
+  });
+
+  assert.equal(response.dataRead!.toolAvailable, false);
+  assert.equal(response.dataRead!.used, false);
+  if (!capturedRequest) {
+    throw new Error('Expected gateway request to be captured.');
+  }
+  const requestRecord = capturedRequest as unknown as Record<string, any>;
+  assert.equal(requestRecord.tools ?? null, null);
+  assert.doesNotMatch(String(requestRecord.instructions ?? ''), /read_spreadsheet_data/i);
+  assert.match(String(requestRecord.instructions ?? ''), /tidak punya akses ke spreadsheet resmi/i);
+});

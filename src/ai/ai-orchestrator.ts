@@ -747,7 +747,7 @@ export function createAiOrchestrator(dependencies: {
         });
       }
       const dataRead = aiResponse.dataRead ?? {
-        toolAvailable: true,
+        toolAvailable: config.spreadsheetReadEnabled,
         requested: false,
         used: false,
         toolCallCount: 0,

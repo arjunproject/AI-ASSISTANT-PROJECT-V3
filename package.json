@@ -11,8 +11,13 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/src/index.js start",
+    "start:bot2": "node dist/src/index.js start bot2",
     "health": "node dist/src/index.js health",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "health:bot2": "node dist/src/index.js health bot2",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "baseline:create": "node tools/baseline-history/create-baseline.mjs",
+    "baseline:list": "node tools/baseline-history/list-baselines.mjs",
+    "baseline:restore": "node tools/baseline-history/restore-baseline.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

@@ -13,6 +13,16 @@ export interface GoogleSheetsConfigInspection {
 export async function inspectGoogleSheetsConfig(
   config: AppConfig,
 ): Promise<GoogleSheetsConfigInspection> {
+  if (!config.spreadsheetReadEnabled && !config.mirrorSyncEnabled) {
+    return {
+      ready: false,
+      spreadsheetId: null,
+      serviceAccountEmail: null,
+      serviceAccountKeyPath: null,
+      error: null,
+    };
+  }
+
   const spreadsheetId = config.googleSheetsSpreadsheetId;
   const serviceAccountEmail = config.googleServiceAccountEmail;
   const serviceAccountKeyPath = config.googleServiceAccountKeyPath;

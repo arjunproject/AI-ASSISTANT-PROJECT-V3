@@ -3,8 +3,11 @@ import { join, resolve } from 'node:path';
 import { getOfficialSuperAdminSeed } from '../access/super-admin-seed.js';
 import { loadEnvFile } from './env-loader.js';
 
+export type RuntimeProfile = 'primary' | 'secondary';
+
 export interface AppConfig {
   projectRoot: string;
+  runtimeProfile: RuntimeProfile;
   stageName: string;
   envFilePath: string;
   runtimeRoot: string;
@@ -40,15 +43,26 @@ export interface AppConfig {
   imageAnalysisTimeoutMs: number;
   imageMaxFileBytes: number;
   imageMaxEdgePixels: number;
+  spreadsheetReadEnabled: boolean;
+  mirrorSyncEnabled: boolean;
 }
 
 export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const projectRoot = resolve(overrides.projectRoot ?? process.cwd());
   const envFilePath = resolveFromProject(projectRoot, overrides.envFilePath ?? '.env');
   loadEnvFile(envFilePath);
-  const runtimeRootInput = overrides.runtimeRoot ?? process.env.APP_RUNTIME_ROOT ?? '.runtime';
+  const runtimeProfile = normalizeRuntimeProfile(
+    (overrides.runtimeProfile as string | undefined) ?? process.env.APP_RUNTIME_PROFILE,
+  );
+  const defaultRuntimeRootInput = runtimeProfile === 'secondary' ? '.runtime-bot2' : '.runtime';
+  const runtimeRootInput = overrides.runtimeRoot ?? process.env.APP_RUNTIME_ROOT ?? defaultRuntimeRootInput;
+  const sharedRuntimeRootInput =
+    process.env.APP_SHARED_RUNTIME_ROOT ?? (runtimeProfile === 'secondary' ? '.runtime' : runtimeRootInput);
   const runtimeRoot = resolveFromProject(projectRoot, runtimeRootInput);
-  const stageName = overrides.stageName ?? process.env.APP_STAGE_NAME ?? 'stage-5';
+  const stageName =
+    overrides.stageName ??
+    process.env.APP_STAGE_NAME ??
+    (runtimeProfile === 'secondary' ? 'stage-5-bot2' : 'stage-5');
   const logFilePath = resolveFromProject(
     projectRoot,
     overrides.logFilePath ?? process.env.APP_LOG_FILE ?? join(runtimeRootInput, 'logs', 'runtime.log'),
@@ -68,25 +82,27 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   );
   const accessRegistryFilePath = resolveFromProject(
     projectRoot,
-    overrides.accessRegistryFilePath ?? process.env.APP_ADMIN_REGISTRY_FILE ?? join(runtimeRootInput, 'access', 'admin-registry.json'),
+    overrides.accessRegistryFilePath ??
+      process.env.APP_ADMIN_REGISTRY_FILE ??
+      join(sharedRuntimeRootInput, 'access', 'admin-registry.json'),
   );
   const officialGroupWhitelistFilePath = resolveFromProject(
     projectRoot,
     overrides.officialGroupWhitelistFilePath ??
       process.env.APP_OFFICIAL_GROUP_WHITELIST_FILE ??
-      join(runtimeRootInput, 'access', 'official-group-whitelist.json'),
+      join(sharedRuntimeRootInput, 'access', 'official-group-whitelist.json'),
   );
   const dynamicPromptRegistryFilePath = resolveFromProject(
     projectRoot,
     overrides.dynamicPromptRegistryFilePath ??
       process.env.APP_DYNAMIC_PROMPT_REGISTRY_FILE ??
-      join(runtimeRootInput, 'ai', 'dynamic-prompts.json'),
+      join(sharedRuntimeRootInput, 'ai', 'dynamic-prompts.json'),
   );
   const dynamicPromptAuditFilePath = resolveFromProject(
     projectRoot,
     overrides.dynamicPromptAuditFilePath ??
       process.env.APP_DYNAMIC_PROMPT_AUDIT_FILE ??
-      join(runtimeRootInput, 'ai', 'dynamic-prompt-audit.json'),
+      join(sharedRuntimeRootInput, 'ai', 'dynamic-prompt-audit.json'),
   );
   const whatsappAuthDir = resolveFromProject(
     projectRoot,
@@ -97,10 +113,14 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     overrides.whatsappQrFilePath ?? process.env.APP_WA_QR_FILE ?? join(runtimeRootInput, 'whatsapp', 'qr', 'login-qr.png'),
   );
   const whatsappTransportMode = overrides.whatsappTransportMode ?? 'baileys-local-auth-qr';
-  const botPrimaryNumber = normalizePhoneNumber(
-    overrides.botPrimaryNumber ?? process.env.APP_BOT_PRIMARY_NUMBER ?? '6285655002277',
-  );
   const superAdminNumbers = getOfficialSuperAdminSeed(overrides.superAdminNumbers);
+  const defaultBotPrimaryNumber =
+    runtimeProfile === 'secondary'
+      ? superAdminNumbers[1] ?? superAdminNumbers[0] ?? '201507007785'
+      : '6285655002277';
+  const botPrimaryNumber = normalizePhoneNumber(
+    overrides.botPrimaryNumber ?? process.env.APP_BOT_PRIMARY_NUMBER ?? defaultBotPrimaryNumber,
+  );
   const paintCommand = overrides.paintCommand ?? process.env.APP_PAINT_COMMAND ?? 'mspaint.exe';
   const reconnectDelaysMs =
     overrides.reconnectDelaysMs ??
@@ -160,9 +180,18 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     overrides.imageMaxEdgePixels ?? process.env.IMAGE_MAX_EDGE_PIXELS,
     4_096,
   );
+  const spreadsheetReadEnabled = parseBoolean(
+    overrides.spreadsheetReadEnabled ?? process.env.APP_SPREADSHEET_READ_ENABLED,
+    runtimeProfile !== 'secondary',
+  );
+  const mirrorSyncEnabled = parseBoolean(
+    overrides.mirrorSyncEnabled ?? process.env.APP_MIRROR_SYNC_ENABLED,
+    runtimeProfile !== 'secondary',
+  );
 
   return {
     projectRoot,
+    runtimeProfile,
     stageName,
     envFilePath,
     runtimeRoot,
@@ -198,6 +227,8 @@ export function loadAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     imageAnalysisTimeoutMs,
     imageMaxFileBytes,
     imageMaxEdgePixels,
+    spreadsheetReadEnabled,
+    mirrorSyncEnabled,
   };
 }
 
@@ -218,9 +249,34 @@ function parseReconnectDelays(source: string | undefined, fallback: number[]): n
   return parsed.length > 0 ? parsed : fallback;
 }
 
+function normalizeRuntimeProfile(value: string | null | undefined): RuntimeProfile {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'secondary' || normalized === 'bot2' ? 'secondary' : 'primary';
+}
+
 function normalizePhoneNumber(value: string): string {
   const digits = value.replace(/[^\d]/g, '');
   return digits.length > 0 ? digits : '6285655002277';
+}
+
+function parseBoolean(value: boolean | string | null | undefined, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
 function normalizeOptionalEnvValue(value: string | null | undefined): string | null {

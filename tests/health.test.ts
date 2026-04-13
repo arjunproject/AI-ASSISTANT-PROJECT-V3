@@ -1,7 +1,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { writeDynamicAdminRegistry } from '../src/access/admin-registry.js';
 import { writeDynamicPromptRegistry } from '../src/ai/dynamic-prompt-registry.js';
@@ -577,6 +577,63 @@ test('health becomes blocked when dynamic prompt registry is not ready', async (
   assert.equal(health.dynamicPromptRegistryReady, false);
   assert.equal(health.overallStatus, 'blocked');
   assert.match(health.lastError ?? '', /Unexpected token|Expected property name|JSON/i);
+
+  await lock.release();
+});
+
+test('secondary bot health can be ready without mirror sync when transport and shared registries are healthy', async () => {
+  const temp = await createTempRoot('stage-7-health-bot2-ready-');
+  cleanups.push(temp.cleanup);
+  await seedPackageJson(temp.root);
+  await seedBuildArtifact(temp.root);
+  await seedOfficialGroup(temp.root);
+  await seedSessionCreds(join(temp.root, '.runtime-bot2', 'whatsapp', 'auth'), {
+    registrationId: 12345,
+  });
+
+  const config = loadAppConfig({
+    projectRoot: temp.root,
+    runtimeProfile: 'secondary',
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'test-model',
+  });
+
+  const snapshot = createState(temp.root, {
+    stageName: config.stageName,
+    qrFilePath: config.whatsappQrFilePath,
+    connectionState: 'connected',
+    socketState: 'open',
+    syncState: 'healthy',
+    sessionPresent: true,
+    receivedPendingNotifications: true,
+    companionOnline: true,
+    appStateSyncReady: true,
+    deviceActivityState: 'active',
+    messageFlowState: 'usable',
+    qrState: 'cleared',
+    inboundReady: true,
+    googleSheetsReady: false,
+    lastGoogleSheetsError: null,
+    mirrorSyncReady: false,
+    lastMirrorSyncAt: null,
+    lastMirrorSyncError: null,
+    mirrorFreshnessState: 'unknown',
+    activeDynamicAdminCount: 1,
+    superAdminCount: 2,
+  });
+  await mkdir(dirname(config.runtimeStateFilePath), { recursive: true });
+  await writeFile(config.runtimeStateFilePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+  const lock = await acquireProcessLock(config.lockFilePath, config.stageName);
+
+  const health = await collectHealthReport(config);
+
+  assert.equal(health.runtimePid, process.pid);
+  assert.equal(health.connectionState, 'connected');
+  assert.equal(health.googleSheetsReady, false);
+  assert.equal(health.mirrorSyncReady, false);
+  assert.equal(health.mirrorFreshnessState, 'unknown');
+  assert.equal(health.overallStatus, 'ready');
+  assert.equal(health.lastError, null);
 
   await lock.release();
 });

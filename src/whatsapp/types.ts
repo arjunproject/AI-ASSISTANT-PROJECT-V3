@@ -192,6 +192,15 @@ export interface RuntimeStateSnapshot {
 }
 
 export function buildDefaultRuntimeState(config: AppConfig): RuntimeStateSnapshot {
+  const googleSheetsEnabled = config.spreadsheetReadEnabled || config.mirrorSyncEnabled;
+  const googleSheetsReady = googleSheetsEnabled
+    ? Boolean(
+        config.googleSheetsSpreadsheetId &&
+          config.googleServiceAccountEmail &&
+          config.googleServiceAccountKeyPath,
+      )
+    : false;
+
   return {
     stageName: config.stageName,
     whatsappTransportMode: config.whatsappTransportMode,
@@ -272,21 +281,17 @@ export function buildDefaultRuntimeState(config: AppConfig): RuntimeStateSnapsho
         : 'Image gateway is not ready.',
     lastImageCaptionPreview: null,
     lastImageInputMode: null,
-    googleSheetsReady: Boolean(
-      config.googleSheetsSpreadsheetId &&
-        config.googleServiceAccountEmail &&
-        config.googleServiceAccountKeyPath,
-    ),
+    googleSheetsReady,
     lastGoogleSheetsError:
-      config.googleSheetsSpreadsheetId &&
-      config.googleServiceAccountEmail &&
-      config.googleServiceAccountKeyPath
+      !googleSheetsEnabled
         ? null
-        : !config.googleSheetsSpreadsheetId
-          ? 'GOOGLE_SHEETS_SPREADSHEET_ID is missing.'
-        : !config.googleServiceAccountEmail
-            ? 'GOOGLE_SERVICE_ACCOUNT_EMAIL is missing.'
-            : 'GOOGLE_SERVICE_ACCOUNT_KEY_PATH is missing.',
+        : googleSheetsReady
+          ? null
+          : !config.googleSheetsSpreadsheetId
+            ? 'GOOGLE_SHEETS_SPREADSHEET_ID is missing.'
+          : !config.googleServiceAccountEmail
+              ? 'GOOGLE_SERVICE_ACCOUNT_EMAIL is missing.'
+              : 'GOOGLE_SERVICE_ACCOUNT_KEY_PATH is missing.',
     mirrorSyncReady: false,
     lastMirrorSyncAt: null,
     lastMirrorSyncError: null,

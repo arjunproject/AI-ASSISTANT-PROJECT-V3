@@ -138,6 +138,7 @@ export interface HealthReport {
 
 export async function collectHealthReport(config: AppConfig): Promise<HealthReport> {
   const issues: string[] = [];
+  const mirrorRequired = config.mirrorSyncEnabled;
   const nodeReady = typeof process.versions.node === 'string' && process.versions.node.length > 0;
   if (!nodeReady) {
     issues.push('Node runtime is not available.');
@@ -186,10 +187,10 @@ export async function collectHealthReport(config: AppConfig): Promise<HealthRepo
   if (!runtimeState.webSearchReady && runtimeState.lastWebSearchError) {
     issues.push(runtimeState.lastWebSearchError);
   }
-  if (runtimeState.googleSheetsReady && runtimeState.mirrorFreshnessState === 'stale') {
+  if (mirrorRequired && runtimeState.googleSheetsReady && runtimeState.mirrorFreshnessState === 'stale') {
     issues.push(`Mirror is stale. Last sync at ${runtimeState.lastMirrorSyncAt ?? 'unknown'}.`);
   }
-  if (runtimeState.googleSheetsReady && runtimeState.lastMirrorSyncError) {
+  if (mirrorRequired && runtimeState.googleSheetsReady && runtimeState.lastMirrorSyncError) {
     issues.push(runtimeState.lastMirrorSyncError);
   }
   if (runtimeState.syncAuthorityMode === 'conflict' && runtimeState.lastAuthorityConflictReason) {
@@ -225,11 +226,13 @@ export async function collectHealthReport(config: AppConfig): Promise<HealthRepo
     runtimeState.deviceActivityState === 'active' &&
     runtimeState.messageFlowState === 'usable' &&
     runtimeState.inboundReady &&
-    runtimeState.googleSheetsReady &&
-    runtimeState.mirrorSyncReady &&
-    runtimeState.mirrorFreshnessState === 'fresh' &&
-    runtimeState.syncAuthorityMode !== 'conflict' &&
-    runtimeState.writeSessionStatus !== 'failed'
+    (!mirrorRequired || (
+      runtimeState.googleSheetsReady &&
+      runtimeState.mirrorSyncReady &&
+      runtimeState.mirrorFreshnessState === 'fresh' &&
+      runtimeState.syncAuthorityMode !== 'conflict' &&
+      runtimeState.writeSessionStatus !== 'failed'
+    ))
   ) {
     overallStatus = 'ready';
   } else if (runtimeState.connectionState === 'logged_out' || runtimeState.connectionState === 'failed_closed') {

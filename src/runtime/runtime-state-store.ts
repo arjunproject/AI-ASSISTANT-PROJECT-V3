@@ -103,21 +103,38 @@ export async function readRuntimeStateSnapshot(
   const aiInspection = inspectAiGatewayConfig(config);
   const voiceInspection = inspectVoiceGatewayConfig(config);
   const imageInspection = inspectImageGatewayConfig(config);
-  const googleSheetsInspection = await inspectGoogleSheetsConfig(config);
+  const googleSheetsEnabled = config.spreadsheetReadEnabled || config.mirrorSyncEnabled;
+  const googleSheetsInspection = googleSheetsEnabled
+    ? await inspectGoogleSheetsConfig(config)
+    : {
+        ready: false,
+        spreadsheetId: null,
+        serviceAccountEmail: null,
+        serviceAccountKeyPath: null,
+        error: null,
+      };
   const dynamicPromptInspection = await inspectDynamicPromptRegistryFiles(
     config.dynamicPromptRegistryFilePath,
     config.dynamicPromptAuditFilePath,
   );
   const qrFileExists = await fileExists(config.whatsappQrFilePath);
-  const mirrorAuthoritySnapshot = await readMirrorAuthoritySnapshot(config);
-  const lastMirrorSyncAt = normalizeStoredTimestamp(storedSnapshot.lastMirrorSyncAt);
-  const lastMirrorSyncError = normalizeStoredString(storedSnapshot.lastMirrorSyncError);
-  const mirrorFreshnessState = deriveMirrorFreshnessState({
-    googleSheetsReady: googleSheetsInspection.ready,
-    lastMirrorSyncAt,
-    lastMirrorSyncError,
-    staleAfterMs: config.mirrorFreshnessStaleAfterMs,
-  });
+  const mirrorAuthoritySnapshot = config.mirrorSyncEnabled
+    ? await readMirrorAuthoritySnapshot(config)
+    : buildDefaultMirrorAuthoritySnapshot();
+  const lastMirrorSyncAt = config.mirrorSyncEnabled
+    ? normalizeStoredTimestamp(storedSnapshot.lastMirrorSyncAt)
+    : null;
+  const lastMirrorSyncError = config.mirrorSyncEnabled
+    ? normalizeStoredString(storedSnapshot.lastMirrorSyncError)
+    : null;
+  const mirrorFreshnessState = config.mirrorSyncEnabled
+    ? deriveMirrorFreshnessState({
+        googleSheetsReady: googleSheetsInspection.ready,
+        lastMirrorSyncAt,
+        lastMirrorSyncError,
+        staleAfterMs: config.mirrorFreshnessStaleAfterMs,
+      })
+    : 'unknown';
 
   let snapshot: RuntimeStateSnapshot = {
     ...buildDefaultRuntimeState(config),
@@ -138,6 +155,7 @@ export async function readRuntimeStateSnapshot(
     googleSheetsReady: googleSheetsInspection.ready,
     lastGoogleSheetsError: googleSheetsInspection.error,
     mirrorSyncReady:
+      config.mirrorSyncEnabled &&
       googleSheetsInspection.ready &&
       storedSnapshot.mirrorSyncReady === true &&
       mirrorFreshnessState === 'fresh',
@@ -403,4 +421,25 @@ async function readMirrorAuthoritySnapshot(config: AppConfig): Promise<Pick<
       lastAuthorityConflictReason: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function buildDefaultMirrorAuthoritySnapshot(): Pick<
+  RuntimeStateSnapshot,
+  | 'syncAuthorityMode'
+  | 'activeWriteSessionId'
+  | 'activeWriteScope'
+  | 'activeWriteSource'
+  | 'writeSessionStatus'
+  | 'lastAuthoritativeSource'
+  | 'lastAuthorityConflictReason'
+> {
+  return {
+    syncAuthorityMode: 'live_authoritative',
+    activeWriteSessionId: null,
+    activeWriteScope: [],
+    activeWriteSource: null,
+    writeSessionStatus: 'idle',
+    lastAuthoritativeSource: null,
+    lastAuthorityConflictReason: null,
+  };
 }

@@ -26,6 +26,7 @@ import { createRuntimeMessageStore } from './message-store.js';
 import { createQrManager } from './qr-manager.js';
 import { createReconnectManager } from './reconnect-manager.js';
 import { loadSessionAuthState, loadStoredLidMappings } from './session-store.js';
+import { isSiblingBotSender } from './system-bot-guard.js';
 import type { RuntimeIdentityResolutionSnapshot, RuntimeStateSnapshot } from './types.js';
 
 const SESSION_ERROR_PATTERNS = [
@@ -563,6 +564,25 @@ export async function startBaileysTransport(
       await handleLiveMessageFlow(generation, message, upsertType, resolvedIdentity);
 
       if (upsertType === 'append' || !isUserFacingMessage(message)) {
+        continue;
+      }
+
+      if (
+        isSiblingBotSender(
+          resolvedIdentity?.normalizedSender ?? null,
+          config.botPrimaryNumber,
+          config.superAdminNumbers,
+        )
+      ) {
+        logger.warn('ai.skipped_sibling_bot_sender', {
+          messageId: message.key?.id ?? null,
+          senderJid: resolvedIdentity?.senderJid ?? null,
+          normalizedSender: resolvedIdentity?.normalizedSender ?? null,
+          chatJid: resolvedIdentity?.chatJid ?? null,
+          isFromSelf: resolvedIdentity?.isFromSelf ?? false,
+          isGroup: resolvedIdentity?.isGroup ?? false,
+          runtimeProfile: config.runtimeProfile,
+        });
         continue;
       }
 

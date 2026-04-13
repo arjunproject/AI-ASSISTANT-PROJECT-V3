@@ -33,6 +33,8 @@ test('second runtime process is rejected by the process lock with an honest erro
     ...process.env,
     APP_STAGE_NAME: 'stage-1',
     APP_RUNTIME_ROOT: runtimeRoot,
+    APP_SPREADSHEET_READ_ENABLED: 'false',
+    APP_MIRROR_SYNC_ENABLED: 'false',
   };
   const cwd = process.cwd();
 

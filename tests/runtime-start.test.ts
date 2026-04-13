@@ -209,3 +209,71 @@ test('runtime state store removes legacy fields that are no longer part of the o
   assert.equal('lastContextResetAt' in rawState, false);
   assert.equal(rawState.connectionState, 'idle');
 });
+
+test('secondary runtime skips mirror sync startup even when a mirror factory override is supplied', async () => {
+  const temp = await createTempRoot('stage-7-runtime-secondary-');
+  cleanups.push(temp.cleanup);
+
+  const config = loadAppConfig({
+    projectRoot: temp.root,
+    runtimeProfile: 'secondary',
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'test-model',
+  });
+
+  let mirrorSyncStarts = 0;
+  const transportFactory: RuntimeTransportFactory = async ({ runtimeStateStore }) => {
+    await runtimeStateStore.syncDerivedState();
+    await runtimeStateStore.update({
+      connectionState: 'connected',
+      socketState: 'open',
+      syncState: 'healthy',
+      receivedPendingNotifications: true,
+      companionOnline: true,
+      appStateSyncReady: true,
+      deviceActivityState: 'active',
+      messageFlowState: 'usable',
+      inboundReady: true,
+      qrState: 'cleared',
+      qrOpenedInPaint: false,
+      lastError: null,
+    });
+
+    let resolveStopped: () => void = () => {};
+    const untilStopped = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
+    });
+
+    return {
+      untilStopped,
+      async stop() {
+        resolveStopped();
+      },
+    };
+  };
+  const mirrorSyncFactory: RuntimeMirrorSyncFactory = async () => {
+    mirrorSyncStarts += 1;
+    return {
+      async stop() {
+        return undefined;
+      },
+    };
+  };
+
+  const runtime = await startRuntime(config, { transportFactory, mirrorSyncFactory });
+
+  try {
+    await waitFor(async () => {
+      const stateSnapshot = await readRuntimeStateSnapshot(config, true);
+      return stateSnapshot.connectionState === 'connected';
+    });
+
+    const stateSnapshot = await readRuntimeStateSnapshot(config, true);
+    assert.equal(mirrorSyncStarts, 0);
+    assert.equal(stateSnapshot.googleSheetsReady, false);
+    assert.equal(stateSnapshot.mirrorSyncReady, false);
+    assert.equal(stateSnapshot.mirrorFreshnessState, 'unknown');
+  } finally {
+    await runtime.stop('test');
+  }
+});

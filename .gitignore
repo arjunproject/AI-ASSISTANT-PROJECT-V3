@@ -1,4 +1,7 @@
 node_modules/
 dist/
 .runtime/
+.runtime-bot2/
 .env
+.baseline-history/
+.baseline_*/
