@@ -9,6 +9,10 @@ import {
   parsePromptCommandMessage,
   parseSuperAdminCommandMessage,
 } from '../src/command/command-parser.js';
+import {
+  buildAdminHelpText,
+  getOfficialCommandRegistry,
+} from '../src/command/command-registry.js';
 
 test('command parser normalizes slash, case, spacing, and separators into one canonical command', () => {
   const variants = [
@@ -121,6 +125,14 @@ test('command parser keeps prompt numbering arguments intact for prompt edit com
   }
 });
 
+test('admin help text includes every official command usage, including prompt commands', () => {
+  const helpText = buildAdminHelpText();
+
+  for (const definition of getOfficialCommandRegistry()) {
+    assert.match(helpText, new RegExp(escapeRegExp(`- ${definition.usage}`), 'u'));
+  }
+});
+
 function buildMessage(text: string): WAMessage {
   return {
     key: {
@@ -132,4 +144,8 @@ function buildMessage(text: string): WAMessage {
       conversation: text,
     },
   } as WAMessage;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }

@@ -121,6 +121,10 @@ export function createInboundMessageListener(dependencies: {
 }
 
 export function isUserFacingMessage(message: WAMessage): boolean {
+  if (message.key?.remoteJid === 'status@broadcast') {
+    return false;
+  }
+
   return hasUserFacingContent(message.message, 0);
 }
 

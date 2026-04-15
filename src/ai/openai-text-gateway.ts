@@ -49,7 +49,8 @@ const COMMON_AI_SYSTEM_PROMPT_LINES = [
   'Kalau memakai web search, jawaban akhir wajib memuat jawaban inti dulu. Jangan jawab hanya dengan sumber.',
   'Kalau user minta rekomendasi dan batasannya sudah cukup, jawab langsung dengan opsi konkret. Jangan balik bertanya kecuali inti permintaan memang belum jelas.',
   'Kalau pesan user berasal dari voice note yang sudah ditranskripsikan, perlakukan hasil transkripsinya sebagai pesan user biasa.',
-  'Kalau pesan user berasal dari gambar yang sudah dianalisis ke teks, perlakukan hasil analisis itu sebagai konteks visual netral dari gambar user.',
+  'Kalau pesan user berasal dari gambar, perlakukan caption/pertanyaan user sebagai permintaan utama dan observasi visual sebagai konteks gambar terbaru.',
+  'Untuk input gambar, jawab langsung pertanyaan user tentang gambar terbaru. Jangan membuat caption kecuali user jelas meminta caption, dan jangan meminta user menempel/deskripsikan gambar lagi jika observasi visual sudah tersedia.',
   'Jangan menampilkan payload internal, schema internal, metadata internal, atau objek internal ke user.',
   'Jangan mengarang fitur yang belum ada seperti image generation, image editing, write spreadsheet bisnis, atau automasi bisnis lain.',
   'Jangan menutup jawaban dengan kalimat template yang menawarkan detail lain, filter lain, file lain, Excel, CSV, atau bantuan lanjutan kecuali user memang memintanya.',
@@ -240,12 +241,23 @@ function buildGatewayInput(request: AiGatewayRequest, additionalInput: string | 
         .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.text}`)
         .join('\n')
     : null;
+  const imageAnsweringGuide = request.inputMode === 'image'
+    ? [
+        'Aturan khusus pesan gambar terbaru:',
+        '- Pesan/caption user pada blok gambar adalah pertanyaan utama.',
+        '- Observasi visual adalah konteks dari gambar terbaru, bukan permintaan untuk membuat caption.',
+        '- Jika user bertanya "ini gambar apa", jawab identifikasi objek utama secara langsung.',
+        '- Jangan membuat caption, daftar caption, atau gaya promosi kecuali user eksplisit meminta caption.',
+        '- Jangan meminta user mengirim ulang gambar, menempel konteks visual, atau mendeskripsikan gambar lagi jika observasi visual sudah ada.',
+      ].join('\n')
+    : null;
 
   return [
     `Pesan terbaru user (utama):\n${request.userText}`,
     request.inputMode !== 'text'
       ? `Mode input terbaru:\n${describeInputMode(request.inputMode)}`
       : null,
+    imageAnsweringGuide,
     transcriptText
       ? `Recent conversation (pakai hanya jika membantu memahami pesan terbaru):\n${transcriptText}`
       : null,
@@ -276,7 +288,7 @@ function describeInputMode(inputMode: Exclude<AiGatewayRequest['inputMode'], 'te
     return 'Audio yang sudah ditranskripsikan ke teks';
   }
 
-  return 'Gambar yang sudah dianalisis menjadi teks konteks visual';
+  return 'Gambar terbaru yang sudah dianalisis menjadi observasi visual untuk menjawab caption/pertanyaan user';
 }
 
 function buildInstructions(

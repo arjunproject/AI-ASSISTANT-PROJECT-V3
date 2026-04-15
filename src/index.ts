@@ -2,6 +2,7 @@ import { loadAppConfig } from './config/app-config.js';
 import { collectHealthReport } from './core/health-service.js';
 import { createLogger } from './core/logger.js';
 import { ProcessLockConflictError, ProcessLockMalformedError } from './core/process-lock.js';
+import { enqueueRuntimeTestMessage } from './runtime/runtime-test-outbox.js';
 import { startRuntime } from './runtime/runtime-service.js';
 
 async function main(): Promise<void> {
@@ -12,6 +13,24 @@ async function main(): Promise<void> {
   if (command === 'health') {
     const report = await collectHealthReport(config);
     console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  if (command === 'test-send') {
+    const target = process.argv[4] ?? 'bot1';
+    const text = process.argv.slice(5).join(' ');
+    const result = await enqueueRuntimeTestMessage(config, {
+      target,
+      text,
+    });
+
+    console.log(JSON.stringify({
+      status: 'queued',
+      runtimeProfile: config.runtimeProfile,
+      requestId: result.id,
+      targetJid: result.targetJid,
+      filePath: result.filePath,
+    }, null, 2));
     return;
   }
 

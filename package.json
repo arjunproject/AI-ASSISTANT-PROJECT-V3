@@ -14,6 +14,7 @@
     "start:bot2": "node dist/src/index.js start bot2",
     "health": "node dist/src/index.js health",
     "health:bot2": "node dist/src/index.js health bot2",
+    "test-send:bot2": "node dist/src/index.js test-send bot2 bot1",
     "test": "node --import tsx --test tests/*.test.ts",
     "baseline:create": "node tools/baseline-history/create-baseline.mjs",
     "baseline:list": "node tools/baseline-history/list-baselines.mjs",

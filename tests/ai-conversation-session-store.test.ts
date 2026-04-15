@@ -23,6 +23,117 @@ test('ai conversation store keeps recent transcript available for same-chat cont
   assert.match(prepared.transcript[0]?.text ?? '', /printer kantor error terus/i);
 });
 
+test('ai conversation store does not load old context for standalone new topics', () => {
+  const store = createAiConversationSessionStore(4);
+
+  store.rememberExchange(
+    'chat-new-topic',
+    'printer kantor error terus',
+    'Cek kabel daya dulu.',
+    '2026-04-10T00:00:00.000Z',
+    'none',
+  );
+
+  const prepared = store.prepareContext('chat-new-topic', 'berapa hasil 12 kali 7');
+
+  assert.equal(prepared.contextLoaded, false);
+  assert.equal(prepared.contextSource, 'none');
+  assert.equal(prepared.summary, null);
+  assert.equal(prepared.transcript.length, 0);
+});
+
+test('ai conversation store treats a fresh image handoff as a new visual boundary', () => {
+  const store = createAiConversationSessionStore(4);
+
+  store.rememberExchange(
+    'chat-image-boundary',
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Ini gambar apa?',
+      'Observasi visual gambar terbaru: mikrofon lavalier JETE M1 di dalam kemasan.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru.',
+    ].join('\n'),
+    'Itu mikrofon lavalier JETE M1.',
+    '2026-04-10T00:00:00.000Z',
+    'none',
+  );
+
+  const prepared = store.prepareContext(
+    'chat-image-boundary',
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Ini gambar apa?',
+      'Observasi visual gambar terbaru: cangkir putih di atas meja.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru.',
+    ].join('\n'),
+  );
+
+  assert.equal(prepared.contextLoaded, false);
+  assert.equal(prepared.contextSource, 'none');
+  assert.equal(prepared.transcript.length, 0);
+});
+
+test('ai conversation store still loads visual context when the user explicitly follows up', () => {
+  const store = createAiConversationSessionStore(4);
+
+  store.rememberExchange(
+    'chat-image-followup',
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Ini gambar apa?',
+      'Observasi visual gambar terbaru: printer kantor menampilkan lampu error merah.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru.',
+    ].join('\n'),
+    'Itu printer kantor dengan lampu error merah.',
+    '2026-04-10T00:00:00.000Z',
+    'none',
+  );
+
+  const prepared = store.prepareContext('chat-image-followup', 'yang tadi harus mulai cek dari mana?');
+
+  assert.equal(prepared.contextLoaded, true);
+  assert.equal(prepared.contextSource, 'current');
+  assert.match(prepared.transcript.map((turn) => turn.text).join('\n'), /lampu error merah/i);
+});
+
+test('ai conversation store limits ambiguous follow-up to the latest exchange only', () => {
+  const store = createAiConversationSessionStore(4);
+
+  store.rememberExchange(
+    'chat-ambiguous-followup',
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Ini gambar apa?',
+      'Observasi visual gambar terbaru: mikrofon lavalier JETE M1 di dalam kemasan.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru.',
+    ].join('\n'),
+    'Itu mikrofon lavalier JETE M1.',
+    '2026-04-10T00:00:00.000Z',
+    'none',
+  );
+  store.rememberExchange(
+    'chat-ambiguous-followup',
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Kalau ini?',
+      'Observasi visual gambar terbaru: botol minuman oranye di atas meja.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru.',
+    ].join('\n'),
+    'Itu botol minuman oranye.',
+    '2026-04-10T00:01:00.000Z',
+    'none',
+  );
+
+  const prepared = store.prepareContext('chat-ambiguous-followup', 'yang benar apa?');
+  const transcriptText = prepared.transcript.map((turn) => turn.text).join('\n');
+
+  assert.equal(prepared.contextLoaded, true);
+  assert.equal(prepared.contextSource, 'current');
+  assert.equal(prepared.transcript.length, 2);
+  assert.match(transcriptText, /botol minuman oranye/i);
+  assert.doesNotMatch(transcriptText, /mikrofon lavalier/i);
+});
+
 test('ai conversation store archives older context neutrally when recent transcript overflows', () => {
   const store = createAiConversationSessionStore(2);
 
@@ -52,11 +163,14 @@ test('ai conversation store archives older context neutrally when recent transcr
 
   assert.equal(prepared.contextLoaded, true);
   assert.equal(prepared.contextSource, 'current');
-  assert.equal(prepared.transcript.length, 4);
+  assert.equal(prepared.transcript.length, 2);
   assert.equal(prepared.archivedSnippetCount, 1);
   assert.match(prepared.summary ?? '', /printer kantor error terus/i);
   assert.match(prepared.transcript[0]?.text ?? '', /yang tadi itu mulai cek dari mana/i);
-  assert.match(prepared.transcript[2]?.text ?? '', /berapa hasil 12 kali 7/i);
+  assert.doesNotMatch(
+    prepared.transcript.map((turn) => turn.text).join('\n'),
+    /berapa hasil 12 kali 7/i,
+  );
 });
 
 test('ai conversation store keeps archived notes free from search source metadata', () => {
@@ -255,11 +369,11 @@ test('ai conversation store keeps the active transcript short even when session 
     'current',
   );
 
-  const prepared = store.prepareContext('chat-6', 'pesan terbaru');
+  const prepared = store.prepareContext('chat-6', 'lanjut topik terbaru');
 
   assert.equal(prepared.contextSource, 'current');
-  assert.equal(prepared.transcript.length, 6);
+  assert.equal(prepared.transcript.length, 2);
   assert.equal(prepared.archivedSnippetCount, 1);
   assert.match(prepared.summary ?? '', /Topik awal masih aktif/i);
-  assert.match(prepared.transcript[0]?.text ?? '', /Topik masih lanjut/i);
+  assert.match(prepared.transcript[0]?.text ?? '', /Topik keempat/i);
 });

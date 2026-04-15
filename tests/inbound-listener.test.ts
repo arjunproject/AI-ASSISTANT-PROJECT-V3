@@ -7,7 +7,7 @@ import type { WAMessage } from '@whiskeysockets/baileys';
 import { loadAppConfig } from '../src/config/app-config.js';
 import { createLogger } from '../src/core/logger.js';
 import { createRuntimeStateStore } from '../src/runtime/runtime-state-store.js';
-import { createInboundMessageListener } from '../src/whatsapp/inbound-listener.js';
+import { createInboundMessageListener, isUserFacingMessage } from '../src/whatsapp/inbound-listener.js';
 import type { RuntimeIdentityResolutionSnapshot } from '../src/whatsapp/types.js';
 import { createTempRoot } from './test-helpers.js';
 
@@ -106,6 +106,50 @@ test('inbound listener ignores non-message payloads without marking inbound read
 
   const logContents = await readFile(config.logFilePath, 'utf8');
   assert.match(logContents, /inbound\.ignored_non_message/);
+});
+
+test('inbound listener ignores WhatsApp status broadcasts even when they contain text', async () => {
+  const temp = await createTempRoot('stage-2-inbound-status-');
+  cleanups.push(temp.cleanup);
+
+  const config = loadAppConfig({ projectRoot: temp.root, stageName: 'stage-2' });
+  const logger = createLogger(config.logFilePath);
+  const runtimeStateStore = await createRuntimeStateStore(config);
+  const listener = createInboundMessageListener({ logger, runtimeStateStore });
+  const statusMessage = {
+    key: {
+      id: 'status-1',
+      remoteJid: 'status@broadcast',
+      fromMe: false,
+      participant: '6285974035215@s.whatsapp.net',
+    },
+    message: {
+      conversation: 'hm',
+    },
+    messageTimestamp: 1_744_252_800,
+  } as WAMessage;
+
+  assert.equal(isUserFacingMessage(statusMessage), false);
+
+  const result = await listener.processMessage(
+    statusMessage,
+    'notify',
+    buildResolution({
+      chatJid: 'status@broadcast',
+      senderJid: '6285974035215@s.whatsapp.net',
+      normalizedSender: '6285974035215',
+      isFromSelf: false,
+      isGroup: false,
+      source: 'participant',
+    }),
+  );
+
+  assert.equal(result.kind, 'ignored_non_message');
+  assert.equal(runtimeStateStore.getSnapshot().inboundReady, false);
+
+  const logContents = await readFile(config.logFilePath, 'utf8');
+  assert.match(logContents, /inbound\.ignored_non_message/);
+  assert.doesNotMatch(logContents, /inbound\.received/);
 });
 
 test('inbound listener does not count history append as live inbound proof', async () => {

@@ -210,8 +210,10 @@ export function findPromptCommandDefinition(canonical: string): AdminCommandDefi
 }
 
 export function buildAdminHelpText(): string {
+  const officialCommands = getOfficialCommandRegistry();
+
   return [
     'Admin help:',
-    ...ADMIN_COMMAND_REGISTRY.map((definition) => `- ${definition.usage}`),
+    ...officialCommands.map((definition) => `- ${definition.usage}`),
   ].join('\n');
 }

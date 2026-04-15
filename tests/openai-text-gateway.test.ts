@@ -459,7 +459,12 @@ test('ai gateway labels image-derived input honestly inside the shared prompt', 
   });
 
   await gateway.generateReply({
-    userText: 'Caption user: Tolong cek ini.\nIsi gambar: monitor retak di pojok kanan atas.',
+    userText: [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Tolong cek ini.',
+      'Observasi visual gambar terbaru: monitor retak di pojok kanan atas.',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
+    ].join('\n'),
     inputMode: 'image',
     chatJid: '201507007785@s.whatsapp.net',
     senderJid: '201507007785@s.whatsapp.net',
@@ -475,7 +480,10 @@ test('ai gateway labels image-derived input honestly inside the shared prompt', 
   }
   const requestText = String((capturedRequest as Record<string, unknown>).input ?? '');
   assert.match(requestText, /Mode input terbaru:/);
-  assert.match(requestText, /Gambar yang sudah dianalisis menjadi teks konteks visual/i);
+  assert.match(requestText, /Gambar terbaru yang sudah dianalisis menjadi observasi visual/i);
+  assert.match(requestText, /Aturan khusus pesan gambar terbaru:/i);
+  assert.match(requestText, /Jika user bertanya "ini gambar apa", jawab identifikasi objek utama/i);
+  assert.match(requestText, /Jangan membuat caption, daftar caption, atau gaya promosi/i);
 });
 
 test('ai gateway requests a safe rewrite when the response contains internal payloads', async () => {

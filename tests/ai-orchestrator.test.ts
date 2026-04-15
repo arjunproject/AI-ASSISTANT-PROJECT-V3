@@ -307,9 +307,9 @@ test('ai orchestrator keeps context neutral and can revisit archived context', a
   assert.equal(requests[1]?.summary, null);
   assert.equal(requests[1]?.transcriptLength, 2);
   assert.equal(requests[2]?.summary, null);
-  assert.equal(requests[2]?.transcriptLength, 4);
+  assert.equal(requests[2]?.transcriptLength, 0);
   assert.equal(requests[3]?.summary, null);
-  assert.equal(requests[3]?.transcriptLength, 6);
+  assert.equal(requests[3]?.transcriptLength, 2);
 
   const snapshot = runtimeStateStore.getSnapshot();
   assert.equal(snapshot.lastContextUpdatedAt !== null, true);
@@ -1017,7 +1017,12 @@ test('ai orchestrator analyzes image and routes it through the same AI pipeline'
     },
     async analyze() {
       return {
-        text: 'Caption user: Tolong cek ini.\nIsi gambar: layar laptop dengan editor kode terbuka.',
+        text: [
+          'Pesan gambar terbaru:',
+          'Pertanyaan/caption user: Tolong cek ini.',
+          'Observasi visual gambar terbaru: layar laptop dengan editor kode terbuka.',
+          'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
+        ].join('\n'),
         caption: 'Tolong cek ini.',
         fileSizeBytes: 2_048,
         widthPixels: 1_280,
@@ -1051,7 +1056,7 @@ test('ai orchestrator analyzes image and routes it through the same AI pipeline'
   assert.equal(result.replied, true);
   assert.deepEqual(replies, ['hasil dari image']);
   assert.equal(requests[0]?.inputMode, 'image');
-  assert.match(requests[0]?.userText ?? '', /Isi gambar: layar laptop/i);
+  assert.match(requests[0]?.userText ?? '', /Observasi visual gambar terbaru: layar laptop/i);
   assert.match(requests[0]?.overlay ?? '', /Jawab tetap ringkas/i);
 
   const snapshot = runtimeStateStore.getSnapshot();
@@ -1123,7 +1128,12 @@ test('ai orchestrator keeps memory continuity across image and text on the same 
     },
     async analyze() {
       return {
-        text: 'Caption user: Ini bagian mana yang rusak?\nIsi gambar: printer kantor menampilkan lampu error merah.',
+        text: [
+          'Pesan gambar terbaru:',
+          'Pertanyaan/caption user: Ini bagian mana yang rusak?',
+          'Observasi visual gambar terbaru: printer kantor menampilkan lampu error merah.',
+          'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
+        ].join('\n'),
         caption: 'Ini bagian mana yang rusak?',
         fileSizeBytes: 1_024,
         widthPixels: 1_000,
@@ -1216,7 +1226,12 @@ test('ai orchestrator keeps memory continuity across text and image on the same 
     },
     async analyze() {
       return {
-        text: 'Caption user: Yang ini maksudku.\nIsi gambar: kemasan tinta printer warna hitam.',
+        text: [
+          'Pesan gambar terbaru:',
+          'Pertanyaan/caption user: Yang ini maksudku.',
+          'Observasi visual gambar terbaru: kemasan tinta printer warna hitam.',
+          'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
+        ].join('\n'),
         caption: 'Yang ini maksudku.',
         fileSizeBytes: 1_024,
         widthPixels: 800,

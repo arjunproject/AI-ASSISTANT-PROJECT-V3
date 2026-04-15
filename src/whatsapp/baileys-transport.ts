@@ -15,6 +15,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 import type { RuntimeTransportContext, RuntimeTransportController } from '../runtime/runtime-service.js';
+import { startRuntimeTestOutbox } from '../runtime/runtime-test-outbox.js';
 import { createAiOrchestrator } from '../ai/ai-orchestrator.js';
 import { createAccessController } from '../access/access-controller.js';
 import { createAdminCommandExecutor } from '../command/admin-command-executor.js';
@@ -26,7 +27,7 @@ import { createRuntimeMessageStore } from './message-store.js';
 import { createQrManager } from './qr-manager.js';
 import { createReconnectManager } from './reconnect-manager.js';
 import { loadSessionAuthState, loadStoredLidMappings } from './session-store.js';
-import { isSiblingBotSender } from './system-bot-guard.js';
+import { getSystemBotRoutingSkipReason } from './system-bot-guard.js';
 import type { RuntimeIdentityResolutionSnapshot, RuntimeStateSnapshot } from './types.js';
 
 const SESSION_ERROR_PATTERNS = [
@@ -119,6 +120,7 @@ export async function startBaileysTransport(
   let stopped = false;
   let socketGeneration = 0;
   let activeSocket: ReturnType<typeof makeWASocket> | null = null;
+  let testOutboxController: { stop(): Promise<void> } | null = null;
   let saveCreds: (() => Promise<void>) | null = null;
   let resolvedVersion: WAVersion | null = null;
   let selfJid: string | null = null;
@@ -140,6 +142,41 @@ export async function startBaileysTransport(
   await runtimeStateStore.syncDerivedState();
   await aiOrchestrator.syncState();
   await openSocket('initial');
+  testOutboxController = startRuntimeTestOutbox({
+    config,
+    logger,
+    async sendText(targetJid, text, request) {
+      if (!activeSocket) {
+        throw new Error('WhatsApp socket is not available for test-send.');
+      }
+
+      const sentMessage = await activeSocket.sendMessage(targetJid, {
+        text,
+      });
+      if (sentMessage) {
+        messageStore.remember(sentMessage);
+      }
+
+      const messageId = sentMessage?.key?.id ?? null;
+      if (messageId) {
+        runtimeOriginatedMessageIds.add(messageId);
+      }
+
+      await runtimeStateStore.update({
+        lastOutboundMessageAt: new Date().toISOString(),
+      });
+
+      logger.info('test_outbox.outbound_sent', {
+        requestId: request.id,
+        targetJid,
+        messageId,
+      });
+
+      return {
+        messageId,
+      };
+    },
+  });
 
   return {
     untilStopped,
@@ -155,6 +192,9 @@ export async function startBaileysTransport(
       clearProbeTimeout();
       reconnectManager.cancel();
       await qrManager.dispose();
+
+      await testOutboxController?.stop();
+      testOutboxController = null;
 
       if (activeSocket) {
         activeSocket.end(new Error(`Runtime stopped: ${reason}`));
@@ -327,7 +367,7 @@ export async function startBaileysTransport(
       await activeSocket.sendMessage(
         chatJid,
         { text: chunk },
-        index === 0 ? { quoted: quotedMessage } : undefined,
+        { quoted: quotedMessage },
       );
     }
   }
@@ -568,15 +608,22 @@ export async function startBaileysTransport(
         continue;
       }
 
-      if (
-        isSiblingBotSender(
-          resolvedIdentity?.normalizedSender ?? null,
-          config.botPrimaryNumber,
-          config.superAdminNumbers,
-        )
-      ) {
-        logger.warn('ai.skipped_sibling_bot_sender', {
+      const systemBotRoutingSkipReason = getSystemBotRoutingSkipReason({
+        message,
+        normalizedSender: resolvedIdentity?.normalizedSender ?? null,
+        botPrimaryNumber: config.botPrimaryNumber,
+        superAdminNumbers: config.superAdminNumbers,
+        runtimeProfile: config.runtimeProfile,
+        isFromSelf: resolvedIdentity?.isFromSelf ?? message.key?.fromMe === true,
+        isGroup: resolvedIdentity?.isGroup ?? false,
+        chatJid: resolvedIdentity?.chatJid ?? message.key?.remoteJid ?? null,
+        botJid: resolvedIdentity?.botJid ?? null,
+        botLid: resolvedIdentity?.botLid ?? null,
+      });
+      if (systemBotRoutingSkipReason) {
+        logger.warn('ai.skipped_system_bot_routing', {
           messageId: message.key?.id ?? null,
+          reason: systemBotRoutingSkipReason,
           senderJid: resolvedIdentity?.senderJid ?? null,
           normalizedSender: resolvedIdentity?.normalizedSender ?? null,
           chatJid: resolvedIdentity?.chatJid ?? null,

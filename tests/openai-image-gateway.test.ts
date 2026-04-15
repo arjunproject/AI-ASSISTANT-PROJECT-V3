@@ -53,7 +53,15 @@ test('image gateway analyzes image with the configured official model', async ()
     inputMode: 'image',
   });
 
-  assert.equal(result.text, 'Caption user: Ini gambar apa?\nIsi gambar: layar laptop dengan editor kode terbuka');
+  assert.equal(
+    result.text,
+    [
+      'Pesan gambar terbaru:',
+      'Pertanyaan/caption user: Ini gambar apa?',
+      'Observasi visual gambar terbaru: layar laptop dengan editor kode terbuka',
+      'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
+    ].join('\n'),
+  );
   assert.equal(result.caption, 'Ini gambar apa?');
   assert.equal(result.fileSizeBytes, 1_024);
   assert.equal((capturedBody as { model?: string } | null)?.model, 'gpt-5-mini');
@@ -62,8 +70,79 @@ test('image gateway analyzes image with the configured official model', async ()
   const content = (((capturedBody as { input?: Array<{ content?: unknown[] }> } | null)?.input?.[0]?.content) ??
     []) as Array<Record<string, unknown>>;
   assert.equal(content[0]?.type, 'input_text');
+  assert.match(String(content[0]?.text ?? ''), /Jangan jawab user secara final/i);
   assert.equal(content[1]?.type, 'input_image');
   assert.match(String(content[1]?.image_url ?? ''), /^data:image\/jpeg;base64,/);
+});
+
+test('image gateway fails closed when visual observation is empty', async () => {
+  const config = loadAppConfig({
+    projectRoot: process.cwd(),
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'gpt-5-mini',
+  });
+
+  const fakeClient = {
+    responses: {
+      async create() {
+        return {
+          output_text: 'Caption user: Ini gambar apa?',
+        };
+      },
+    },
+  };
+
+  const gateway = createOpenAiImageGateway(config, {
+    client: fakeClient as never,
+  });
+
+  const result = await gateway.analyze({
+    imageBuffer: Buffer.from('image-bytes'),
+    mimeType: 'image/jpeg',
+    caption: 'Ini gambar apa?',
+    fileSizeBytes: 1_024,
+    widthPixels: 1_280,
+    heightPixels: 720,
+    inputMode: 'image',
+  });
+
+  assert.equal(result.text, '');
+});
+
+test('image gateway strips echoed caption labels from visual observations', async () => {
+  const config = loadAppConfig({
+    projectRoot: process.cwd(),
+    openAiApiKey: 'test-key',
+    openAiTextModel: 'gpt-5-mini',
+  });
+
+  const fakeClient = {
+    responses: {
+      async create() {
+        return {
+          output_text:
+            'Caption user: Ini gambar apa? Isi gambar: Caption: Ini gambar apa? Deskripsi netral: Sebuah lighter berisi cairan kuning transparan.',
+        };
+      },
+    },
+  };
+
+  const gateway = createOpenAiImageGateway(config, {
+    client: fakeClient as never,
+  });
+
+  const result = await gateway.analyze({
+    imageBuffer: Buffer.from('image-bytes'),
+    mimeType: 'image/jpeg',
+    caption: 'Ini gambar apa?',
+    fileSizeBytes: 1_024,
+    widthPixels: 720,
+    heightPixels: 1_280,
+    inputMode: 'image',
+  });
+
+  assert.match(result.text, /Observasi visual gambar terbaru: Sebuah lighter berisi cairan kuning transparan\./);
+  assert.doesNotMatch(result.text, /Caption user|Isi gambar|Deskripsi netral/);
 });
 
 test('image gateway rejects image that is too large or exceeds configured edge size honestly', async () => {

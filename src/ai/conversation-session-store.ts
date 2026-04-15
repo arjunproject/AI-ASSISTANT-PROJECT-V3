@@ -22,7 +22,7 @@ export function createAiConversationSessionStore(maxTurns: number): AiConversati
   const sessions = new Map<string, ConversationSession>();
 
   return {
-    prepareContext(chatJid, _userText) {
+    prepareContext(chatJid, userText) {
       const existing = sessions.get(chatJid);
       if (!existing) {
         return createEmptyPreparation();
@@ -30,13 +30,18 @@ export function createAiConversationSessionStore(maxTurns: number): AiConversati
 
       const transcript = existing.recentTurns.slice(-maxRecentTurns);
       const archivedSummary = buildArchivedSummary(existing.archivedSnippets);
-      const contextLoaded = transcript.length > 0 || Boolean(archivedSummary);
+      const contextRelevance = decideContextRelevance(userText, transcript, archivedSummary);
+      const selectedTranscript = contextRelevance.includeTranscript
+        ? selectRelevantTranscript(userText, transcript)
+        : [];
+      const selectedSummary = contextRelevance.includeSummary ? archivedSummary : null;
+      const contextLoaded = selectedTranscript.length > 0 || Boolean(selectedSummary);
 
       return {
-        summary: archivedSummary,
-        transcript,
+        summary: selectedSummary,
+        transcript: selectedTranscript,
         contextLoaded,
-        contextSource: transcript.length > 0 ? 'current' : archivedSummary ? 'archived' : 'none',
+        contextSource: selectedTranscript.length > 0 ? 'current' : selectedSummary ? 'archived' : 'none',
         archivedSnippetCount: existing.archivedSnippets.length,
       };
     },
@@ -159,6 +164,264 @@ function buildArchivedSummary(snippets: ArchivedContextSnippet[]): string | null
     .map((snippet, index) => `Konteks lama ${index + 1}: ${snippet.summary}`);
 
   return trimForSummary(parts.join(' || '), 320);
+}
+
+function decideContextRelevance(
+  userText: string,
+  transcript: AiConversationTurn[],
+  archivedSummary: string | null,
+): {
+  includeTranscript: boolean;
+  includeSummary: boolean;
+} {
+  if (transcript.length === 0 && !archivedSummary) {
+    return {
+      includeTranscript: false,
+      includeSummary: false,
+    };
+  }
+
+  const normalizedUserText = normalizeForContextDecision(userText);
+  const isFreshImageHandoff = isImageDerivedInput(userText);
+  const explicitReference = hasExplicitContextReference(normalizedUserText);
+  const shortFollowUp = isShortContextDependentFollowUp(normalizedUserText);
+  const transcriptText = transcript.map((turn) => turn.text).join(' ');
+  const transcriptOverlap = hasMeaningfulTokenOverlap(normalizedUserText, transcriptText);
+  const summaryOverlap = archivedSummary
+    ? hasMeaningfulTokenOverlap(normalizedUserText, archivedSummary)
+    : false;
+
+  if (isFreshImageHandoff && !explicitReference) {
+    return {
+      includeTranscript: false,
+      includeSummary: false,
+    };
+  }
+
+  if (explicitReference || shortFollowUp) {
+    return {
+      includeTranscript: transcript.length > 0,
+      includeSummary: Boolean(archivedSummary && (explicitReference || summaryOverlap)),
+    };
+  }
+
+  if (transcriptOverlap || summaryOverlap) {
+    return {
+      includeTranscript: transcriptOverlap && transcript.length > 0,
+      includeSummary: summaryOverlap,
+    };
+  }
+
+  return {
+    includeTranscript: false,
+    includeSummary: false,
+  };
+}
+
+function selectRelevantTranscript(
+  userText: string,
+  transcript: AiConversationTurn[],
+): AiConversationTurn[] {
+  if (transcript.length <= 2) {
+    return transcript;
+  }
+
+  const normalizedUserText = normalizeForContextDecision(userText);
+  if (prefersLatestExchange(normalizedUserText)) {
+    return selectLatestExchange(transcript);
+  }
+
+  if (!hasMeaningfulTokenOverlap(normalizedUserText, transcript.map((turn) => turn.text).join(' '))) {
+    return selectLatestExchange(transcript);
+  }
+
+  const selectedIndexes = new Set<number>();
+  transcript.forEach((turn, index) => {
+    if (!hasMeaningfulTokenOverlap(normalizedUserText, turn.text)) {
+      return;
+    }
+
+    selectedIndexes.add(index);
+    if (turn.role === 'user' && transcript[index + 1]?.role === 'assistant') {
+      selectedIndexes.add(index + 1);
+    }
+    if (turn.role === 'assistant' && transcript[index - 1]?.role === 'user') {
+      selectedIndexes.add(index - 1);
+    }
+  });
+
+  const selectedTranscript = [...selectedIndexes]
+    .sort((left, right) => left - right)
+    .map((index) => transcript[index])
+    .filter((turn): turn is AiConversationTurn => Boolean(turn));
+
+  return selectedTranscript.length > 0 ? selectedTranscript : transcript;
+}
+
+function isImageDerivedInput(text: string): boolean {
+  return /(?:^|\n)\s*(?:pesan gambar terbaru|caption user|isi gambar|pertanyaan\/caption user|observasi visual gambar terbaru)\s*:/iu.test(
+    text,
+  );
+}
+
+function hasExplicitContextReference(text: string): boolean {
+  return /\b(?:tadi|sebelumnya|sebelum(?:nya)?|barusan|kemarin|lanjut|lanjutkan|lagi|konteks|maksudku|tersebut|balik\s+ke|kembali\s+ke|yang\s+(?:tadi|ini|itu|no|nomor)|no\s*\d+|nomor\s*\d+|record\s*\d+|baris\s*\d+|gambar\s+(?:tadi|sebelumnya)|foto\s+(?:tadi|sebelumnya))\b/iu.test(
+    text,
+  );
+}
+
+function isShortContextDependentFollowUp(text: string): boolean {
+  const tokenCount = countContextTokens(text);
+  if (tokenCount === 0 || tokenCount > 8 || looksLikeStandaloneShortQuestion(text)) {
+    return false;
+  }
+
+  return /\b(?:ini|itu|dia|mereka|yg|yang|harganya|rupiahnya|totalnya|rinciannya|detailnya|kalo|kalau)\b/iu.test(
+    text,
+  );
+}
+
+function looksLikeStandaloneShortQuestion(text: string): boolean {
+  return (
+    /\bberapa\s+(?:hasil|jumlah)\b/iu.test(text) ||
+    /\b\d+\s*(?:x|\*|kali|tambah|plus|kurang|bagi|dibagi)\s*\d+\b/iu.test(text)
+  );
+}
+
+function prefersLatestExchange(text: string): boolean {
+  return /\b(?:terbaru|terakhir|barusan|baru\s+ini|yang\s+ini|ini\s+tadi|ini\s+barusan)\b/iu.test(
+    text,
+  );
+}
+
+function hasMeaningfulTokenOverlap(leftText: string, rightText: string): boolean {
+  const leftTokens = extractMeaningfulTokens(leftText);
+  if (leftTokens.size === 0) {
+    return false;
+  }
+
+  const rightTokens = extractMeaningfulTokens(rightText);
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizeForContextDecision(text: string): string {
+  return text
+    .toLocaleLowerCase('id-ID')
+    .normalize('NFKC')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function countContextTokens(text: string): number {
+  return extractRawContextTokens(text).length;
+}
+
+function extractMeaningfulTokens(text: string): Set<string> {
+  return new Set(
+    extractRawContextTokens(text)
+      .filter((token) => token.length >= 3 || /\d/u.test(token))
+      .filter((token) => !CONTEXT_STOP_WORDS.has(token)),
+  );
+}
+
+function extractRawContextTokens(text: string): string[] {
+  return normalizeForContextDecision(text)
+    .replace(
+      /(?:pesan gambar terbaru|caption user|isi gambar|pertanyaan\/caption user|observasi visual gambar terbaru|tugas jawaban)\s*:/giu,
+      ' ',
+    )
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .split(/\s+/u)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+const CONTEXT_STOP_WORDS = new Set([
+  'ada',
+  'aja',
+  'aku',
+  'atau',
+  'apa',
+  'bisa',
+  'buat',
+  'caption',
+  'cek',
+  'dari',
+  'data',
+  'dan',
+  'di',
+  'dong',
+  'foto',
+  'gak',
+  'gambar',
+  'ini',
+  'itu',
+  'jadi',
+  'jawaban',
+  'kalau',
+  'kalo',
+  'kamu',
+  'ke',
+  'kok',
+  'lagi',
+  'loh',
+  'mau',
+  'nya',
+  'observasi',
+  'pakai',
+  'pake',
+  'pertanyaan',
+  'saja',
+  'sama',
+  'saya',
+  'soal',
+  'tadi',
+  'tentang',
+  'terbaru',
+  'the',
+  'tolong',
+  'tugas',
+  'untuk',
+  'user',
+  'visual',
+  'yang',
+]);
+
+function selectLatestExchange(transcript: AiConversationTurn[]): AiConversationTurn[] {
+  if (transcript.length <= 2) {
+    return transcript;
+  }
+
+  const lastUserIndex = findLastIndex(transcript, (turn) => turn.role === 'user');
+  if (lastUserIndex < 0) {
+    return transcript.slice(-2);
+  }
+
+  const selected: AiConversationTurn[] = [transcript[lastUserIndex]!];
+  const maybeAssistant = transcript[lastUserIndex + 1];
+  if (maybeAssistant?.role === 'assistant') {
+    selected.push(maybeAssistant);
+  } else if (lastUserIndex > 0 && transcript[lastUserIndex - 1]?.role === 'assistant') {
+    selected.unshift(transcript[lastUserIndex - 1]!);
+  }
+
+  return selected;
+}
+
+function findLastIndex<T>(values: T[], predicate: (value: T) => boolean): number {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index]!)) {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function sanitizeAssistantTextForMemory(text: string): string {

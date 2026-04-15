@@ -9,13 +9,15 @@ import type {
 } from './types.js';
 
 const IMAGE_ANALYSIS_INSTRUCTIONS = [
-  'Kamu menerima gambar WhatsApp untuk diubah menjadi teks konteks visual netral bagi pipeline chat.',
-  'Tulis hanya hal yang benar-benar terlihat atau yang eksplisit disebut user di caption.',
+  'Kamu menerima gambar WhatsApp dan harus mengekstrak observasi visual terbaru untuk pipeline chat.',
+  'Tulis hanya isi visual yang benar-benar terlihat pada gambar.',
   'Jangan menjawab user secara final sebagai asisten chat.',
+  'Jangan membuat caption, slogan, judul, atau teks kreatif kecuali teks itu memang terlihat di gambar.',
+  'Jangan mengulang caption user, jangan menulis label "Caption", "Caption user", "Isi gambar", atau "Deskripsi netral".',
   'Jangan menebak detail yang tidak terlihat jelas.',
   'Jangan memaksa topik, jangan membuat parser keyword, dan jangan membuat rule engine.',
-  'Kalau ada caption, pertahankan caption itu apa adanya sebagai konteks tambahan.',
-  'Output harus plain text, singkat, jelas, dan netral.',
+  'Gunakan caption user hanya untuk memahami fokus observasi, bukan untuk disalin ke output.',
+  'Output harus plain text, singkat, jelas, dan netral tentang gambar terbaru saja.',
   'Kalau gambar tidak bisa dipahami, kembalikan string kosong.',
 ].join(' ');
 
@@ -101,7 +103,7 @@ export function createOpenAiImageGateway(
         },
       );
 
-      const visualText = normalizeImageAnalysis(extractOutputText(response));
+      const visualText = normalizeImageAnalysis(extractOutputText(response), request.caption);
       const text = composeImageContextText(request.caption, visualText);
 
       return {
@@ -119,12 +121,16 @@ function buildImageContent(request: AiImageAnalysisRequest): Array<Record<string
   const caption = request.caption?.trim() ?? '';
   const guidanceText = caption.length > 0
     ? [
-        'Caption user:',
+        'Caption/pertanyaan user untuk gambar ini:',
         caption,
         '',
-        'Jelaskan isi gambar secara netral dan ringkas untuk membantu model chat menjawab user.',
+        'Ekstrak observasi visual dari gambar terbaru agar model chat bisa menjawab caption/pertanyaan user itu.',
+        'Jangan jawab user secara final dan jangan membuat caption promosi.',
       ].join('\n')
-    : 'Jelaskan isi gambar secara netral dan ringkas untuk membantu model chat menjawab user.';
+    : [
+        'Ekstrak observasi visual dari gambar terbaru agar model chat bisa menjawab user.',
+        'Jangan jawab user secara final dan jangan membuat caption promosi.',
+      ].join('\n');
 
   return [
     {
@@ -145,9 +151,15 @@ function buildImageDataUrl(imageBuffer: Buffer, mimeType: string | null): string
 
 function composeImageContextText(caption: string | null, visualText: string): string {
   const normalizedCaption = caption?.trim() ?? '';
+  if (!visualText.trim()) {
+    return '';
+  }
+
   const parts = [
-    normalizedCaption ? `Caption user: ${normalizedCaption}` : null,
-    visualText ? `Isi gambar: ${visualText}` : null,
+    'Pesan gambar terbaru:',
+    normalizedCaption ? `Pertanyaan/caption user: ${normalizedCaption}` : 'Pertanyaan/caption user: (tidak ada caption)',
+    `Observasi visual gambar terbaru: ${visualText.trim()}`,
+    'Tugas jawaban: jawab pertanyaan/caption user berdasarkan observasi visual gambar terbaru. Jangan membuat caption kecuali user memang meminta caption. Jangan meminta user mengirim ulang atau menempel konteks visual lagi.',
   ].filter((part): part is string => Boolean(part));
 
   return parts.join('\n');
@@ -225,9 +237,27 @@ function extractOutputTextPart(part: unknown): string | null {
   return null;
 }
 
-function normalizeImageAnalysis(value: string): string {
-  return value
+function normalizeImageAnalysis(value: string, caption: string | null): string {
+  const normalizedCaption = caption?.trim() ?? '';
+  const captionPattern = normalizedCaption
+    ? new RegExp(escapeRegExp(normalizedCaption), 'giu')
+    : null;
+  const cleaned = value
     .replace(/\r\n/gu, '\n')
     .replace(/\n{3,}/gu, '\n\n')
-    .trim();
+    .replace(/\b(?:caption(?:\s+user)?|pertanyaan\/caption user)\s*:\s*/giu, ' ')
+    .replace(/\b(?:isi gambar|deskripsi netral|observasi visual(?: gambar terbaru)?)\s*:\s*/giu, ' ');
+  const withoutCaption = captionPattern ? cleaned.replace(captionPattern, ' ') : cleaned;
+  const lines = withoutCaption
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/\s{2,}/gu, ' ').trim())
+    .filter((line) => line.length > 0);
+
+  return lines.join('\n').trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
