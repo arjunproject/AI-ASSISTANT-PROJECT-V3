@@ -49,7 +49,7 @@ export function createAiOrchestrator(dependencies: {
   imageGateway?: AiImageGateway;
 }): AiOrchestrator {
   const { config, logger, runtimeStateStore, sendReply, downloadVoiceMedia, downloadImageMedia } = dependencies;
-  const gateway = dependencies.gateway ?? createOpenAiTextGateway(config);
+  const gateway = dependencies.gateway ?? createOpenAiTextGateway(config, { logger });
   const voiceGateway = dependencies.voiceGateway ?? createOpenAiVoiceGateway(config);
   const imageGateway = dependencies.imageGateway ?? createOpenAiImageGateway(config);
   const conversationStore = createAiConversationSessionStore(config.aiSessionMaxTurns);

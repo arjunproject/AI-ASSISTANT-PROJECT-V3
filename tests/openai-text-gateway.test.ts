@@ -4,6 +4,58 @@ import assert from 'node:assert/strict';
 import { loadAppConfig } from '../src/config/app-config.js';
 import { createOpenAiTextGateway, inspectAiGatewayConfig } from '../src/ai/openai-text-gateway.js';
 
+const EXPECTED_DATA_RULES_XML = [
+  '<ATURAN_DATA_MUTLAK>',
+  '1. VISIBILITAS & PATOKAN \'NO\': Default HANYA tampilkan motor READY. Sembunyikan TERJUAL kecuali user eksplisit meminta. PENGECUALIAN: Jika user mencari spesifik via \'NO\' (Kolom A), wajib tampilkan apa pun statusnya (Abaikan filter READY, set includeSold=true). DILARANG pakai Row Number.',
+  '2. DEFINISI DATA TIDAK LENGKAP (STOK MOTOR): Sebuah data dianggap TIDAK LENGKAP hanya jika ada kekosongan pada field B, C, D, E, F, G, H, atau L. Jika field I, J, dan K (terkait penjualan) kosong, itu adalah NORMAL dan datanya tetap dianggap LENGKAP. Jangan pernah melaporkan motor sebagai "data tidak lengkap" hanya karena belum terjual.',
+  '3. NO CHERRY-PICKING: Jika hasil temuan >1, WAJIB tampilkan SEMUA hasil. Beri label \'NO\' atau \'PLAT\' sebagai pembeda.',
+  '4. ZERO-CHATTER: Langsung eksekusi data. DILARANG KERAS membuat kalimat basa-basi pengantar (contoh salah: "Berikut data motor:") dan DILARANG menambahkan Note/Catatan di akhir output.',
+  '5. FORMAT OUTPUT BERDASARKAN INTENT:',
+  '   - INTENT SPESIFIK: Jawab HANYA detail field yang ditanya sesuai <TEMPLATE_INTENT_SPESIFIK>.',
+  '   - INTENT GENERAL: Tampilkan 100% FULL RECORD. DILARANG KERAS pakai tabel spasi/markdown. WAJIB pakai format List Vertikal (Satu baris satu field) sesuai <TEMPLATE_FULL_RECORD>. Nilai kosong = `-`.',
+  '6. PENGGUNAAN EMOJI (DIIZINKAN): Kamu diizinkan menggunakan gaya/emoji dari Dynamic Prompt Overlay untuk menghias output, SELAMA struktur utama list vertikal `NAMA FIELD: Nilai` tetap utuh dan tidak berubah menjadi paragraf atau tabel hancur.',
+  '7. PENANGANAN 0 HASIL & ANTI-HALUSINASI: Jika hasil eksekusi tool mengembalikan 0 baris data, itu berarti datanya memang tidak ada di database. Gunakan reasoning-mu sendiri dan gaya bahasamu yang sedang aktif untuk menginformasikan hal ini secara natural kepada user. DILARANG KERAS memaksakan jawaban dengan mencomot atau mengarang data dari riwayat percakapan sebelumnya untuk menutupi kegagalan pencarian tool.',
+  '</ATURAN_DATA_MUTLAK>',
+  '',
+  '<TEMPLATE_INTENT_SPESIFIK>',
+  'User: [Pertanyaan nilai spesifik] dari [Kata Kunci]',
+  'Assistant: NO [Angka NO]: [Nama Kolom] = [Nilai]. NO [Angka NO berikutnya]: [Nama Kolom] = [Nilai].',
+  '</TEMPLATE_INTENT_SPESIFIK>',
+  '',
+  '<TEMPLATE_FULL_RECORD>',
+  'NO: [Nilai]',
+  'NAMA MOTOR: [Nilai]',
+  'TAHUN: [Nilai]',
+  'PLAT: [Nilai]',
+  'SURAT-SURAT: [Nilai]',
+  'TAHUN PLAT: [Nilai]',
+  'PAJAK: [Nilai]',
+  'HARGA JUAL: [Nilai]',
+  'HARGA LAKU: [Nilai]',
+  'TGL TERJUAL: [Nilai]',
+  'LABA/RUGI: [Nilai]',
+  'HARGA BELI: [Nilai]',
+  'STATUS: [Nilai]',
+  '</TEMPLATE_FULL_RECORD>',
+].join('\n');
+
+function getInputMessages(input: unknown): Array<{ role: string; content: string }> {
+  assert.equal(Array.isArray(input), true);
+  return (input as Array<Record<string, unknown>>).map((item) => ({
+    role: String(item.role ?? ''),
+    content: String(item.content ?? ''),
+  }));
+}
+
+function getInputText(input: unknown): string {
+  return getInputMessages(input).map((item) => item.content).join('\n\n');
+}
+
+function assertDataRulesXmlIncluded(instructions: unknown): void {
+  const text = String(instructions ?? '');
+  assert.equal(text.includes(EXPECTED_DATA_RULES_XML), true);
+}
+
 test('ai gateway inspection stays blocked when api key or model is missing', () => {
   const config = loadAppConfig({
     projectRoot: process.cwd(),
@@ -107,6 +159,11 @@ test('ai gateway extracts text from message output parts and keeps latest messag
         text: 'Halo',
         observedAt: '2026-04-10T00:00:00.000Z',
       },
+      {
+        role: 'assistant',
+        text: 'Halo juga, aku dengerin.',
+        observedAt: '2026-04-10T00:00:01.000Z',
+      },
     ],
     webSearchAvailable: false,
     dynamicPromptOverlay: null,
@@ -125,12 +182,17 @@ test('ai gateway extracts text from message output parts and keeps latest messag
   assert.match(String(sentRequest.instructions ?? ''), /pesan terbaru user sebagai pusat utama/i);
   assert.doesNotMatch(String(sentRequest.instructions ?? ''), /JSON valid tanpa markdown|stockMotor|selectedNos|selectionIntent/i);
 
-  const inputText = String(sentRequest.input ?? '');
-  const latestMessageIndex = inputText.indexOf('Pesan terbaru user (utama):');
-  const transcriptIndex = inputText.indexOf('Recent conversation (pakai hanya jika membantu memahami pesan terbaru):');
-  assert.notEqual(latestMessageIndex, -1);
-  assert.notEqual(transcriptIndex, -1);
-  assert.equal(latestMessageIndex < transcriptIndex, true);
+  const inputMessages = getInputMessages(sentRequest.input);
+  assert.equal(inputMessages[0]?.role, 'system');
+  assert.match(inputMessages[0]?.content ?? '', /Fokus awal: curhat berat/i);
+  assert.equal(inputMessages[1]?.role, 'user');
+  assert.equal(inputMessages[1]?.content, 'Halo');
+  assert.equal(inputMessages[2]?.role, 'assistant');
+  assert.equal(inputMessages[2]?.content, 'Halo juga, aku dengerin.');
+  assert.equal(inputMessages.at(-1)?.role, 'user');
+  assert.match(inputMessages.at(-1)?.content ?? '', /Pengirim WhatsApp saat ini: 201507007785/i);
+  assert.match(inputMessages.at(-1)?.content ?? '', /Pesan terbaru user \(utama\):/i);
+  assert.match(inputMessages.at(-1)?.content ?? '', /Aku lagi capek banget/i);
 });
 
 test('ai gateway reports incomplete max_output_tokens responses honestly', async () => {
@@ -429,7 +491,7 @@ test('ai gateway includes dynamic prompt overlay as secondary guidance', async (
   if (!capturedRequest) {
     throw new Error('Expected gateway request to be captured.');
   }
-  const requestText = String((capturedRequest as Record<string, unknown>).input ?? '');
+  const requestText = getInputText((capturedRequest as Record<string, unknown>).input);
   assert.match(requestText, /Overlay instruksi tambahan untuk chat ini/i);
   assert.match(requestText, /Jawab lebih ringkas\./);
 });
@@ -478,7 +540,7 @@ test('ai gateway labels image-derived input honestly inside the shared prompt', 
   if (!capturedRequest) {
     throw new Error('Expected gateway request to be captured.');
   }
-  const requestText = String((capturedRequest as Record<string, unknown>).input ?? '');
+  const requestText = getInputText((capturedRequest as Record<string, unknown>).input);
   assert.match(requestText, /Mode input terbaru:/);
   assert.match(requestText, /Gambar terbaru yang sudah dianalisis menjadi observasi visual/i);
   assert.match(requestText, /Aturan khusus pesan gambar terbaru:/i);
@@ -582,6 +644,7 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   });
 
   const requests: Array<Record<string, any>> = [];
+  const logEntries: Array<{ message: string; context?: Record<string, unknown> }> = [];
   const fakeClient = {
     responses: {
       async create(request: Record<string, any>) {
@@ -618,6 +681,18 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
 
   const gateway = createOpenAiTextGateway(config, {
     client: fakeClient as never,
+    logger: {
+      logFilePath: 'test.log',
+      info(message, context) {
+        logEntries.push({ message, context });
+      },
+      warn(message, context) {
+        logEntries.push({ message, context });
+      },
+      error(message, context) {
+        logEntries.push({ message, context });
+      },
+    },
     dataProvider: {
       async readData() {
         return {
@@ -650,17 +725,70 @@ test('ai gateway executes spreadsheet tool calls before returning final text', a
   assert.equal(requests[0]?.tools?.some((tool: { name?: string }) => tool.name === 'read_spreadsheet_data'), true);
   assert.deepEqual(
     requests[0]?.tools?.[0]?.parameters?.required ?? null,
-    ['sheet', 'query', 'includeSold', 'limit', 'filters'],
+    ['sheet', 'query', 'includeSold', 'limit', 'incompleteOnly', 'filters'],
   );
   assert.deepEqual(
     requests[0]?.tools?.[0]?.parameters?.properties?.filters?.items?.required ?? null,
     ['field', 'operator', 'value'],
   );
+  const spreadsheetTool = requests[0]?.tools?.[0];
+  assert.deepEqual(
+    spreadsheetTool?.parameters?.properties?.filters?.items?.properties?.operator?.enum ?? null,
+    ['contains', 'equals', 'starts_with', 'is_empty'],
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.query?.description ?? ''),
+    /ekstrak ANGKA-nya saja/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.query?.description ?? ''),
+    /DILARANG KERAS memasukkan kata "no", "nomor", atau spasi/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.includeSold?.description ?? ''),
+    /Pencarian via NO wajib di-set true/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.filters?.items?.properties?.value?.description ?? ''),
+    /ekstrak ANGKA-nya saja/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.filters?.description ?? ''),
+    /gunakan parameter incompleteOnly=true sebagai jalur utama/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.filters?.description ?? ''),
+    /Operator "is_empty" tetap tersedia jika user meminta cek kekosongan field tertentu/,
+  );
+  assert.match(
+    String(spreadsheetTool?.parameters?.properties?.incompleteOnly?.description ?? ''),
+    /Set true HANYA JIKA user mencari motor yang datanya tidak lengkap/,
+  );
   assert.equal(requests[1]?.previous_response_id, 'resp-1');
   assert.equal(Array.isArray(requests[1]?.input), true);
-  assert.match(String(requests[1]?.instructions ?? ''), /tampilkan setiap record yang kamu pilih secara utuh/i);
-  assert.match(String(requests[1]?.instructions ?? ''), /jangan menambahkan penutup template/i);
-  assert.match(String(requests[1]?.instructions ?? ''), /jangan awali record dengan numbering buatan seperti 1\), 2\)/i);
+  const toolArgumentsLog = logEntries.find((entry) => entry.message === 'ai.data_read_tool_arguments');
+  assert.equal(toolArgumentsLog?.context?.toolName, 'read_spreadsheet_data');
+  assert.equal(toolArgumentsLog?.context?.sheet, 'STOK MOTOR');
+  assert.equal(toolArgumentsLog?.context?.query, null);
+  assert.equal(toolArgumentsLog?.context?.includeSold, false);
+  assert.equal(toolArgumentsLog?.context?.incompleteOnly, null);
+  assert.equal(toolArgumentsLog?.context?.filters, null);
+  assert.equal(
+    toolArgumentsLog?.context?.rawArguments,
+    '{"sheet":"STOK MOTOR","query":null,"includeSold":false,"limit":null,"filters":null}',
+  );
+  assertDataRulesXmlIncluded(requests[0]?.instructions);
+  assertDataRulesXmlIncluded(requests[1]?.instructions);
+  assert.match(String(requests[1]?.instructions ?? ''), /<ATURAN_DATA_MUTLAK>/);
+  assert.match(String(requests[1]?.instructions ?? ''), /ZERO-CHATTER/);
+  assert.match(String(requests[1]?.instructions ?? ''), /DILARANG KERAS pakai tabel spasi\/markdown/);
+  assert.match(String(requests[1]?.instructions ?? ''), /PENGGUNAAN EMOJI \(DIIZINKAN\)/);
+  assert.match(String(requests[1]?.instructions ?? ''), /PENANGANAN 0 HASIL & ANTI-HALUSINASI/);
+  assert.match(String(requests[1]?.instructions ?? ''), /Gunakan reasoning-mu sendiri dan gaya bahasamu yang sedang aktif/);
+  assert.match(String(requests[1]?.instructions ?? ''), /Status tampilkan sebagai READY atau TERJUAL, bukan true\/false/);
+  assert.match(String(requests[1]?.instructions ?? ''), /<TEMPLATE_FULL_RECORD>/);
+  assert.match(String(requests[1]?.instructions ?? ''), /HARGA BELI: \[Nilai\]/);
+  assert.doesNotMatch(String(requests[1]?.instructions ?? ''), /Mio|Beat berapa|harga beli motor Mio/i);
   assert.equal(response.dataRead!.used, true);
   assert.equal(response.dataRead!.toolCallCount, 1);
   assert.deepEqual(response.dataRead!.sheetNames, ['STOK MOTOR']);

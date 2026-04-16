@@ -10,6 +10,7 @@ export type SpreadsheetReadSheetName = GoogleSheetsMirrorSheetName;
 export type SpreadsheetReadFilterOperator =
   | 'contains'
   | 'equals'
+  | 'is_empty'
   | 'starts_with';
 
 export interface SpreadsheetReadFilter {
@@ -23,6 +24,7 @@ export interface SpreadsheetReadRequest {
   query?: string | null;
   filters?: SpreadsheetReadFilter[] | null;
   includeSold?: boolean | null;
+  incompleteOnly?: boolean | null;
   limit?: number | null;
 }
 
@@ -57,6 +59,16 @@ const STOK_MOTOR_HEADERS = [
 ];
 
 const EMPTY_CELL_VALUE = '-';
+const STOK_MOTOR_MANDATORY_FIELDS = [
+  'NAMA MOTOR',
+  'TAHUN',
+  'PLAT',
+  'SURAT-SURAT',
+  'TAHUN PLAT',
+  'PAJAK',
+  'HARGA JUAL',
+  'HARGA BELI',
+];
 
 interface ColumnDescriptor {
   col: number;
@@ -348,11 +360,15 @@ function applyFilters(
       }
     }
 
+    if (sheetName === 'STOK MOTOR' && request.incompleteOnly === true && !isIncompleteStokMotorRow(row)) {
+      return false;
+    }
+
     if (query.length > 0 && !matchesQuery(row, query)) {
       return false;
     }
 
-    return filters.every((filter) => matchesFilter(row, filter));
+    return matchesFilters(row, filters);
   });
 }
 
@@ -365,6 +381,21 @@ function applyLimit(
   }
 
   return rows.slice(0, Math.floor(limit));
+}
+
+function isIncompleteStokMotorRow(row: SearchableRow): boolean {
+  return STOK_MOTOR_MANDATORY_FIELDS.some((fieldName) => {
+    const normalizedFieldName = normalizeFieldName(fieldName);
+    const cell = row.cells.find((candidate) =>
+      candidate.searchableFieldNames.includes(normalizedFieldName),
+    );
+    if (!cell) {
+      return true;
+    }
+
+    const value = normalizeComparable(cell.value);
+    return value.length === 0 || value === EMPTY_CELL_VALUE;
+  });
 }
 
 function matchesFilter(
@@ -395,6 +426,25 @@ function matchesFilter(
   return matchingCells.some((cell) => matchesValue(normalizeComparable(cell.value), right, operator));
 }
 
+function matchesFilters(row: SearchableRow, filters: SpreadsheetReadFilter[]): boolean {
+  if (filters.length === 0) {
+    return true;
+  }
+
+  const emptyFilters = filters.filter((filter) => filter.operator === 'is_empty');
+  const regularFilters = filters.filter((filter) => filter.operator !== 'is_empty');
+
+  if (!regularFilters.every((filter) => matchesFilter(row, filter))) {
+    return false;
+  }
+
+  if (emptyFilters.length === 0) {
+    return true;
+  }
+
+  return emptyFilters.some((filter) => matchesFilter(row, filter));
+}
+
 function matchesQuery(row: SearchableRow, query: string): boolean {
   return row.cells.some((cell) => {
     if (cell.value !== EMPTY_CELL_VALUE && normalizeComparable(cell.value).includes(query)) {
@@ -410,6 +460,11 @@ function matchesValue(
   right: string,
   operator: SpreadsheetReadFilterOperator,
 ): boolean {
+  if (operator === 'is_empty') {
+    const trimmed = String(left ?? '').trim();
+    return trimmed.length === 0 || trimmed === EMPTY_CELL_VALUE;
+  }
+
   if (operator === 'equals') {
     return left === right;
   }

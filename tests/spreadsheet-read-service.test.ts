@@ -129,6 +129,132 @@ test('spreadsheet read service supports includeSold and basic filters', async ()
   }
 });
 
+test('spreadsheet read service supports native incompleteOnly and is_empty filters for incomplete stok motor fields', async () => {
+  const temp = await createTempRoot('mirror-read-');
+  try {
+    const config = loadAppConfig({
+      projectRoot: temp.root,
+      runtimeRoot: '.runtime',
+      openAiApiKey: '',
+      openAiTextModel: '',
+    });
+
+    const sheet: GoogleSheetsMirrorSheet = {
+      spreadsheetId: 'test-sheet',
+      spreadsheetTitle: 'Arjun Motor Project',
+      sheetName: 'STOK MOTOR',
+      sheetId: 0,
+      syncedAt: new Date().toISOString(),
+      mirrorMode: 'value-only-sparse',
+      discoveryMode: 'column-b-cutoff',
+      lastDiscoveryRange: null,
+      headerSnapshot: [
+        { row: 1, col: 1, a1: 'A1', value: 'NO' },
+        { row: 1, col: 2, a1: 'B1', value: 'NAMA MOTOR' },
+        { row: 1, col: 3, a1: 'C1', value: 'TAHUN' },
+        { row: 1, col: 4, a1: 'D1', value: 'PLAT' },
+        { row: 1, col: 5, a1: 'E1', value: 'SURAT-SURAT' },
+        { row: 1, col: 6, a1: 'F1', value: 'TAHUN PLAT' },
+        { row: 1, col: 7, a1: 'G1', value: 'PAJAK' },
+        { row: 1, col: 8, a1: 'H1', value: 'HARGA JUAL' },
+        { row: 1, col: 12, a1: 'L1', value: 'HARGA BELI' },
+        { row: 1, col: 13, a1: 'M1', value: 'STATUS' },
+      ],
+      nonEmptyRowCount: 5,
+      nonEmptyCellCount: 45,
+      lastDataRow: 5,
+      valueCells: [
+        { row: 1, col: 1, a1: 'A1', value: 'NO' },
+        { row: 1, col: 2, a1: 'B1', value: 'NAMA MOTOR' },
+        { row: 1, col: 3, a1: 'C1', value: 'TAHUN' },
+        { row: 1, col: 4, a1: 'D1', value: 'PLAT' },
+        { row: 1, col: 5, a1: 'E1', value: 'SURAT-SURAT' },
+        { row: 1, col: 6, a1: 'F1', value: 'TAHUN PLAT' },
+        { row: 1, col: 7, a1: 'G1', value: 'PAJAK' },
+        { row: 1, col: 8, a1: 'H1', value: 'HARGA JUAL' },
+        { row: 1, col: 12, a1: 'L1', value: 'HARGA BELI' },
+        { row: 1, col: 13, a1: 'M1', value: 'STATUS' },
+        { row: 2, col: 1, a1: 'A2', value: '1' },
+        { row: 2, col: 2, a1: 'B2', value: 'Beat' },
+        { row: 2, col: 3, a1: 'C2', value: '2021' },
+        { row: 2, col: 4, a1: 'D2', value: 'S 1 AA' },
+        { row: 2, col: 5, a1: 'E2', value: 'Lengkap' },
+        { row: 2, col: 6, a1: 'F2', value: '2027' },
+        { row: 2, col: 7, a1: 'G2', value: 'Hidup' },
+        { row: 2, col: 8, a1: 'H2', value: 'Rp10.000.000' },
+        { row: 2, col: 12, a1: 'L2', value: 'Rp8.000.000' },
+        { row: 2, col: 13, a1: 'M2', value: 'FALSE' },
+        { row: 3, col: 1, a1: 'A3', value: '2' },
+        { row: 3, col: 2, a1: 'B3', value: 'Vario' },
+        { row: 3, col: 3, a1: 'C3', value: '2020' },
+        { row: 3, col: 5, a1: 'E3', value: 'Lengkap' },
+        { row: 3, col: 6, a1: 'F3', value: '2026' },
+        { row: 3, col: 7, a1: 'G3', value: 'Hidup' },
+        { row: 3, col: 8, a1: 'H3', value: 'Rp11.000.000' },
+        { row: 3, col: 12, a1: 'L3', value: 'Rp9.000.000' },
+        { row: 3, col: 13, a1: 'M3', value: 'FALSE' },
+        { row: 4, col: 1, a1: 'A4', value: '3' },
+        { row: 4, col: 2, a1: 'B4', value: 'Mio' },
+        { row: 4, col: 3, a1: 'C4', value: '2019' },
+        { row: 4, col: 4, a1: 'D4', value: 'S 3 CC' },
+        { row: 4, col: 5, a1: 'E4', value: 'Lengkap' },
+        { row: 4, col: 6, a1: 'F4', value: '2025' },
+        { row: 4, col: 7, a1: 'G4', value: 'Hidup' },
+        { row: 4, col: 8, a1: 'H4', value: 'Rp7.000.000' },
+        { row: 4, col: 12, a1: 'L4', value: '-' },
+        { row: 4, col: 13, a1: 'M4', value: 'FALSE' },
+        { row: 5, col: 1, a1: 'A5', value: '4' },
+        { row: 5, col: 2, a1: 'B5', value: 'Scoopy' },
+        { row: 5, col: 3, a1: 'C5', value: '2022' },
+        { row: 5, col: 4, a1: 'D5', value: 'S 4 DD' },
+        { row: 5, col: 5, a1: 'E5', value: 'Lengkap' },
+        { row: 5, col: 6, a1: 'F5', value: '2028' },
+        { row: 5, col: 7, a1: 'G5', value: 'Hidup' },
+        { row: 5, col: 8, a1: 'H5', value: 'Rp12.000.000' },
+        { row: 5, col: 12, a1: 'L5', value: 'Rp10.000.000' },
+        { row: 5, col: 13, a1: 'M5', value: 'FALSE' },
+      ],
+      pendingMutations: [],
+    };
+
+    await writeGoogleSheetsMirrorSheet(config, sheet);
+
+    const service = createSpreadsheetReadService(config);
+    const result = await service.readData({
+      sheet: 'STOK MOTOR',
+      includeSold: true,
+      filters: [
+        { field: 'NAMA MOTOR', operator: 'is_empty', value: '' },
+        { field: 'TAHUN', operator: 'is_empty', value: '' },
+        { field: 'PLAT', operator: 'is_empty', value: '' },
+        { field: 'SURAT-SURAT', operator: 'is_empty', value: '' },
+        { field: 'TAHUN PLAT', operator: 'is_empty', value: '' },
+        { field: 'PAJAK', operator: 'is_empty', value: '' },
+        { field: 'HARGA JUAL', operator: 'is_empty', value: '' },
+        { field: 'HARGA BELI', operator: 'is_empty', value: '' },
+      ],
+    });
+
+    assert.deepEqual(result.rows.map((row) => row.NO), ['2', '3']);
+    assert.equal(result.rows[0]?.PLAT, '-');
+    assert.equal(result.rows[1]?.['HARGA BELI'], '-');
+    assert.equal(result.filteredRowCount, 2);
+
+    const nativeResult = await service.readData({
+      sheet: 'STOK MOTOR',
+      includeSold: true,
+      incompleteOnly: true,
+    });
+
+    assert.deepEqual(nativeResult.rows.map((row) => row.NO), ['2', '3']);
+    assert.equal(nativeResult.rows[0]?.PLAT, '-');
+    assert.equal(nativeResult.rows[1]?.['HARGA BELI'], '-');
+    assert.equal(nativeResult.filteredRowCount, 2);
+  } finally {
+    await temp.cleanup();
+  }
+});
+
 test('spreadsheet read service supports whole-row query across all searchable cells', async () => {
   const temp = await createTempRoot('mirror-read-');
   try {

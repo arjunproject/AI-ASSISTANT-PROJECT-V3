@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 
 import type { AppConfig } from '../config/app-config.js';
+import type { Logger } from '../core/logger.js';
 import { formatWebSearchReply } from './web-search-formatter.js';
 import {
   createSpreadsheetReadService,
@@ -31,8 +32,43 @@ const LEGACY_CAPABILITY_REPAIR_MESSAGE =
   'Jangan bilang user harus kirim spreadsheet lagi, upload CSV/API, atau bahwa kamu belum bisa membaca data otomatis jika tool data resmi tersedia. Untuk pertanyaan kemampuan membaca data proyek resmi, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project dan minta sheet atau kriteria yang dibutuhkan. Jika memang perlu data, pakai tool. Jika data belum tersedia, jawab jujur singkat tanpa narasi kemampuan lama.';
 const LEGACY_NO_SPREADSHEET_CAPABILITY_REPAIR_MESSAGE =
   'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau menyambungkan sumber data lain. Jika kanal ini memang tidak punya akses ke spreadsheet resmi proyek, jawab jujur singkat bahwa akses baca data resmi tidak tersedia di bot ini. Jangan mengarang bahwa kamu bisa membaca data resmi bila tool tidak tersedia.';
-const DATA_PRESENTATION_PROMPT =
-  'Untuk jawaban umum, kamu boleh tetap singkat. Tetapi jika kamu sedang menampilkan record data spreadsheet, tampilkan setiap record yang kamu pilih secara utuh dengan seluruh field yang tersedia di record itu. Jangan mengubah satu record menjadi ringkasan satu baris jika itu membuang field penting. Jika hasil panjang, kamu boleh membaginya secara natural, tetapi setiap record yang tampil harus tetap lengkap. Saat menampilkan record STOK MOTOR, jangan awali record dengan numbering buatan seperti 1), 2), atau nomor urut lain. Gunakan hanya nomor resmi yang sudah ada di field NO. Setelah inti jawaban selesai, berhenti. Jangan menambahkan penutup template, CTA generik, tawaran detail/filter lain, atau ajakan Excel/CSV/API kecuali user memang memintanya langsung.';
+const DATA_RULES_XML = [
+  '<ATURAN_DATA_MUTLAK>',
+  '1. VISIBILITAS & PATOKAN \'NO\': Default HANYA tampilkan motor READY. Sembunyikan TERJUAL kecuali user eksplisit meminta. PENGECUALIAN: Jika user mencari spesifik via \'NO\' (Kolom A), wajib tampilkan apa pun statusnya (Abaikan filter READY, set includeSold=true). DILARANG pakai Row Number.',
+  '2. DEFINISI DATA TIDAK LENGKAP (STOK MOTOR): Sebuah data dianggap TIDAK LENGKAP hanya jika ada kekosongan pada field B, C, D, E, F, G, H, atau L. Jika field I, J, dan K (terkait penjualan) kosong, itu adalah NORMAL dan datanya tetap dianggap LENGKAP. Jangan pernah melaporkan motor sebagai "data tidak lengkap" hanya karena belum terjual.',
+  '3. NO CHERRY-PICKING: Jika hasil temuan >1, WAJIB tampilkan SEMUA hasil. Beri label \'NO\' atau \'PLAT\' sebagai pembeda.',
+  '4. ZERO-CHATTER: Langsung eksekusi data. DILARANG KERAS membuat kalimat basa-basi pengantar (contoh salah: "Berikut data motor:") dan DILARANG menambahkan Note/Catatan di akhir output.',
+  '5. FORMAT OUTPUT BERDASARKAN INTENT:',
+  '   - INTENT SPESIFIK: Jawab HANYA detail field yang ditanya sesuai <TEMPLATE_INTENT_SPESIFIK>.',
+  '   - INTENT GENERAL: Tampilkan 100% FULL RECORD. DILARANG KERAS pakai tabel spasi/markdown. WAJIB pakai format List Vertikal (Satu baris satu field) sesuai <TEMPLATE_FULL_RECORD>. Nilai kosong = `-`.',
+  '6. PENGGUNAAN EMOJI (DIIZINKAN): Kamu diizinkan menggunakan gaya/emoji dari Dynamic Prompt Overlay untuk menghias output, SELAMA struktur utama list vertikal `NAMA FIELD: Nilai` tetap utuh dan tidak berubah menjadi paragraf atau tabel hancur.',
+  '7. PENANGANAN 0 HASIL & ANTI-HALUSINASI: Jika hasil eksekusi tool mengembalikan 0 baris data, itu berarti datanya memang tidak ada di database. Gunakan reasoning-mu sendiri dan gaya bahasamu yang sedang aktif untuk menginformasikan hal ini secara natural kepada user. DILARANG KERAS memaksakan jawaban dengan mencomot atau mengarang data dari riwayat percakapan sebelumnya untuk menutupi kegagalan pencarian tool.',
+  '</ATURAN_DATA_MUTLAK>',
+  '',
+  '<TEMPLATE_INTENT_SPESIFIK>',
+  'User: [Pertanyaan nilai spesifik] dari [Kata Kunci]',
+  'Assistant: NO [Angka NO]: [Nama Kolom] = [Nilai]. NO [Angka NO berikutnya]: [Nama Kolom] = [Nilai].',
+  '</TEMPLATE_INTENT_SPESIFIK>',
+  '',
+  '<TEMPLATE_FULL_RECORD>',
+  'NO: [Nilai]',
+  'NAMA MOTOR: [Nilai]',
+  'TAHUN: [Nilai]',
+  'PLAT: [Nilai]',
+  'SURAT-SURAT: [Nilai]',
+  'TAHUN PLAT: [Nilai]',
+  'PAJAK: [Nilai]',
+  'HARGA JUAL: [Nilai]',
+  'HARGA LAKU: [Nilai]',
+  'TGL TERJUAL: [Nilai]',
+  'LABA/RUGI: [Nilai]',
+  'HARGA BELI: [Nilai]',
+  'STATUS: [Nilai]',
+  '</TEMPLATE_FULL_RECORD>',
+].join('\n');
+const DATA_PRESENTATION_PROMPT = [
+  DATA_RULES_XML,
+].join('\n');
 
 const COMMON_AI_SYSTEM_PROMPT_LINES = [
   'Kamu adalah asisten chat WhatsApp.',
@@ -64,6 +100,12 @@ interface GatewayExecutionOptions {
 interface GatewayExecutionResult {
   response: unknown;
   dataRead: AiGatewayDataReadResult;
+}
+
+interface SpreadsheetToolCall {
+  callId: string;
+  arguments: SpreadsheetReadRequest;
+  rawArguments: string;
 }
 
 export function inspectAiGatewayConfig(config: AppConfig): AiGatewayInspection {
@@ -101,6 +143,7 @@ export function createOpenAiTextGateway(
   overrides: {
     client?: OpenAI;
     dataProvider?: SpreadsheetReadService;
+    logger?: Logger;
   } = {},
 ): AiTextGateway {
   const inspection = inspectAiGatewayConfig(config);
@@ -110,6 +153,7 @@ export function createOpenAiTextGateway(
   const dataProvider = config.spreadsheetReadEnabled
     ? (overrides.dataProvider ?? createSpreadsheetReadService(config))
     : null;
+  const logger = overrides.logger ?? null;
 
   return {
     inspect() {
@@ -128,6 +172,7 @@ export function createOpenAiTextGateway(
         request,
         config.spreadsheetReadEnabled,
         dataProvider,
+        logger,
       );
       let response = execution.response;
       let dataRead = execution.dataRead;
@@ -148,6 +193,7 @@ export function createOpenAiTextGateway(
           request,
           config.spreadsheetReadEnabled,
           dataProvider,
+          logger,
           candidateText,
         );
         response = repairedExecution.response;
@@ -201,7 +247,7 @@ function buildGatewayRequest(
       options.includeSpreadsheetTool !== false,
       options.additionalInstructions ?? null,
     ),
-    input: options.inputOverride ?? buildGatewayInput(request, options.additionalInput ?? null),
+    input: options.inputOverride ?? buildGatewayInputItems(request, options.additionalInput ?? null),
     reasoning: {
       effort: 'low',
     },
@@ -235,12 +281,10 @@ function buildGatewayRequest(
   return baseRequest;
 }
 
-function buildGatewayInput(request: AiGatewayRequest, additionalInput: string | null = null): string {
-  const transcriptText = request.transcript.length > 0
-    ? request.transcript
-        .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.text}`)
-        .join('\n')
-    : null;
+function buildGatewayInputItems(
+  request: AiGatewayRequest,
+  additionalInput: string | null = null,
+): Array<Record<string, unknown>> {
   const imageAnsweringGuide = request.inputMode === 'image'
     ? [
         'Aturan khusus pesan gambar terbaru:',
@@ -252,31 +296,74 @@ function buildGatewayInput(request: AiGatewayRequest, additionalInput: string | 
       ].join('\n')
     : null;
 
-  return [
-    `Pesan terbaru user (utama):\n${request.userText}`,
-    request.inputMode !== 'text'
-      ? `Mode input terbaru:\n${describeInputMode(request.inputMode)}`
-      : null,
-    imageAnsweringGuide,
-    transcriptText
-      ? `Recent conversation (pakai hanya jika membantu memahami pesan terbaru):\n${transcriptText}`
-      : null,
+  const items: Array<Record<string, unknown>> = [];
+  appendInputMessage(
+    items,
+    'system',
     request.summary
       ? `Catatan konteks lama yang mungkin relevan (cadangan saja, jangan diprioritaskan jika pesan terbaru berdiri sendiri):\n${request.summary}`
       : null,
+  );
+
+  for (const turn of request.transcript) {
+    appendInputMessage(items, turn.role, turn.text);
+  }
+
+  appendInputMessage(
+    items,
+    'system',
+    request.inputMode !== 'text'
+      ? `Mode input terbaru:\n${describeInputMode(request.inputMode)}`
+      : null,
+  );
+  appendInputMessage(items, 'system', imageAnsweringGuide);
+  appendInputMessage(
+    items,
+    'system',
     request.dynamicPromptOverlay
       ? `Overlay instruksi tambahan untuk chat ini (sekunder, jangan mengalahkan pesan terbaru, memory, atau reasoning utama):\n${request.dynamicPromptOverlay}`
       : null,
+  );
+  appendInputMessage(
+    items,
+    'system',
     request.webSearchAvailable
-      ? 'Pakai web search hanya jika memang membantu menjawab pesan terbaru dengan lebih akurat atau lebih mutakhir.'
-      : null,
-    request.webSearchAvailable
-      ? 'Kalau web search dipakai, gunakan seperlunya lalu jawab singkat. Sumber akan diformat sistem, jadi jangan tulis daftar sumber sendiri.'
+      ? [
+          'Pakai web search hanya jika memang membantu menjawab pesan terbaru dengan lebih akurat atau lebih mutakhir.',
+          'Kalau web search dipakai, gunakan seperlunya lalu jawab singkat. Sumber akan diformat sistem, jadi jangan tulis daftar sumber sendiri.',
+        ].join('\n')
       : 'Balas langsung ke pesan terbaru tanpa web search.',
-    additionalInput,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join('\n\n');
+  );
+  appendInputMessage(items, 'system', additionalInput);
+
+  appendInputMessage(items, 'user', buildCurrentUserMessage(request));
+
+  return items;
+}
+
+function appendInputMessage(
+  items: Array<Record<string, unknown>>,
+  role: 'system' | 'user' | 'assistant',
+  content: string | null | undefined,
+): void {
+  const normalizedContent = typeof content === 'string' ? content.trim() : '';
+  if (!normalizedContent) {
+    return;
+  }
+
+  items.push({
+    role,
+    content: normalizedContent,
+  });
+}
+
+function buildCurrentUserMessage(request: AiGatewayRequest): string {
+  const senderLabel = request.normalizedSender ?? request.senderJid ?? 'tidak diketahui';
+  return [
+    `Pengirim WhatsApp saat ini: ${senderLabel}`,
+    'Pesan terbaru user (utama):',
+    request.userText,
+  ].join('\n');
 }
 
 function describeInputMode(inputMode: Exclude<AiGatewayRequest['inputMode'], 'text'>): string {
@@ -329,17 +416,13 @@ function buildAiSystemPrompt(spreadsheetReadEnabled: boolean): string {
   return [
     ...COMMON_AI_SYSTEM_PROMPT_LINES,
     'Jika kamu perlu membaca data spreadsheet resmi, kamu boleh memanggil tool read_spreadsheet_data.',
-    'Gunakan query bebas jika data bisa berada di kolom mana pun dalam sheet; gunakan filters hanya jika memang ingin membatasi field tertentu.',
+    'Gunakan query bebas jika data bisa berada di kolom mana pun dalam sheet; gunakan filters hanya jika memang ingin membatasi field tertentu; gunakan incompleteOnly untuk permintaan data STOK MOTOR yang belum lengkap.',
     'Jika user menanyakan apakah kamu bisa membaca datanya, dan tool data resmi tersedia, jawab bahwa kamu bisa membaca spreadsheet resmi Arjun Motor Project.',
     'Saat memakai data spreadsheet, jawab seperti membaca spreadsheet asli secara natural, tanpa menyebut tool, backend, mirror, JSON, atau istilah internal.',
     'Jangan bilang user harus upload spreadsheet, hubungkan CSV/API, atau bahwa kamu tidak bisa membaca data otomatis jika tool data resmi tersedia.',
     'Jangan mengarahkan user ke upload file atau koneksi sumber data lain kecuali user memang sedang membahas sumber data di luar spreadsheet resmi proyek.',
-    'Jika menampilkan data STOK MOTOR, gunakan nomor resmi dari data, bukan numbering buatan.',
-    'Jangan awali tiap record motor dengan 1), 2), bullet bernomor, atau nomor urut buatan lain. Biarkan field NO menjadi satu-satunya nomor.',
-    'Default tampilkan motor READY saja; tampilkan TERJUAL hanya jika user meminta eksplisit.',
     'Status tampilkan sebagai READY atau TERJUAL, bukan true/false.',
-    'Jika hasil lebih dari satu dan intent sudah jelas, tampilkan semua hasil yang relevan tanpa bertanya berulang.',
-    'Instruksi singkat atau ringkas tidak boleh menghilangkan field record saat kamu sedang menampilkan data spreadsheet.',
+    DATA_RULES_XML,
   ].join(' ');
 }
 
@@ -350,6 +433,7 @@ async function createGatewayResponse(
   request: AiGatewayRequest,
   spreadsheetReadEnabled: boolean,
   dataProvider: SpreadsheetReadService | null,
+  logger: Logger | null,
   options: GatewayExecutionOptions = {},
 ): Promise<GatewayExecutionResult> {
   let response = await client.responses.create(buildGatewayRequest(modelName, request, {
@@ -392,6 +476,10 @@ async function createGatewayResponse(
         response,
         dataRead,
       };
+    }
+
+    for (const toolCall of toolCalls) {
+      logSpreadsheetToolArguments(logger, toolCall);
     }
 
     if (!dataProvider) {
@@ -790,39 +878,48 @@ function buildSpreadsheetTool(): Record<string, unknown> {
         query: {
           type: ['string', 'null'],
           description:
-            'Pencarian bebas lintas seluruh isi row dan cell dalam sheet. Gunakan jika data bisa berada di kolom mana pun.',
+            'Pencarian bebas lintas seluruh isi row dan cell dalam sheet. Gunakan jika data bisa berada di kolom mana pun. PENTING: Jika user mencari nomor spesifik (misal "motor no 9" atau "no 10"), ekstrak ANGKA-nya saja (misal "9" atau "10"). DILARANG KERAS memasukkan kata "no", "nomor", atau spasi ke dalam parameter pencarian/value.',
         },
         includeSold: {
           type: ['boolean', 'null'],
-          description: 'Khusus STOK MOTOR. Hanya true jika user eksplisit minta motor terjual.',
+          description:
+            'Khusus STOK MOTOR. Hanya true jika user eksplisit minta motor terjual, ATAU jika user mencari berdasarkan nomor urut (NO) spesifik. Pencarian via NO wajib di-set true.',
         },
         limit: {
           type: ['number', 'null'],
           minimum: 1,
         },
+        incompleteOnly: {
+          type: ['boolean', 'null'],
+          description:
+            'Set true HANYA JIKA user mencari motor yang datanya tidak lengkap, kosong, atau belum diisi penuh (misal: "Cari motor yang datanya belum lengkap").',
+        },
         filters: {
           type: ['array', 'null'],
+          description:
+            'Filter field spesifik untuk membatasi pencarian pada kolom tertentu. Untuk permintaan data STOK MOTOR yang tidak lengkap/kosong/belum diisi penuh, gunakan parameter incompleteOnly=true sebagai jalur utama, bukan merangkai banyak filter manual dan bukan query teks "tidak lengkap". Operator "is_empty" tetap tersedia jika user meminta cek kekosongan field tertentu.',
           items: {
             type: 'object',
             additionalProperties: false,
             properties: {
               field: { type: 'string' },
-              operator: { type: 'string', enum: ['contains', 'equals', 'starts_with'] },
-              value: { type: 'string' },
+              operator: { type: 'string', enum: ['contains', 'equals', 'starts_with', 'is_empty'] },
+              value: {
+                type: 'string',
+                description:
+                  'Nilai filter. PENTING: Jika user mencari nomor spesifik (misal "motor no 9" atau "no 10"), ekstrak ANGKA-nya saja (misal "9" atau "10"). DILARANG KERAS memasukkan kata "no", "nomor", atau spasi ke dalam parameter pencarian/value.',
+              },
             },
             required: ['field', 'operator', 'value'],
           },
         },
       },
-      required: ['sheet', 'query', 'includeSold', 'limit', 'filters'],
+      required: ['sheet', 'query', 'includeSold', 'limit', 'incompleteOnly', 'filters'],
     },
   };
 }
 
-function extractSpreadsheetToolCalls(response: unknown): Array<{
-  callId: string;
-  arguments: SpreadsheetReadRequest;
-}> {
+function extractSpreadsheetToolCalls(response: unknown): SpreadsheetToolCall[] {
   if (!response || typeof response !== 'object') {
     return [];
   }
@@ -832,7 +929,7 @@ function extractSpreadsheetToolCalls(response: unknown): Array<{
     return [];
   }
 
-  const calls: Array<{ callId: string; arguments: SpreadsheetReadRequest }> = [];
+  const calls: SpreadsheetToolCall[] = [];
   for (const item of output) {
     if (!item || typeof item !== 'object') {
       continue;
@@ -860,6 +957,7 @@ function extractSpreadsheetToolCalls(response: unknown): Array<{
       calls.push({
         callId: typeof typedItem.call_id === 'string' ? typedItem.call_id : '',
         arguments: parsed,
+        rawArguments: rawArgs,
       });
     } catch {
       continue;
@@ -869,8 +967,26 @@ function extractSpreadsheetToolCalls(response: unknown): Array<{
   return calls.filter((call) => call.callId.length > 0);
 }
 
+function logSpreadsheetToolArguments(logger: Logger | null, toolCall: SpreadsheetToolCall): void {
+  if (!logger) {
+    return;
+  }
+
+  logger.info('ai.data_read_tool_arguments', {
+    toolName: SPREADSHEET_TOOL_NAME,
+    callId: toolCall.callId,
+    rawArguments: toolCall.rawArguments,
+    sheet: toolCall.arguments.sheet,
+    query: toolCall.arguments.query ?? null,
+    filters: toolCall.arguments.filters ?? null,
+    includeSold: toolCall.arguments.includeSold ?? null,
+    incompleteOnly: toolCall.arguments.incompleteOnly ?? null,
+    limit: toolCall.arguments.limit ?? null,
+  });
+}
+
 async function buildSpreadsheetToolOutput(
-  toolCall: { callId: string; arguments: SpreadsheetReadRequest },
+  toolCall: SpreadsheetToolCall,
   dataProvider: SpreadsheetReadService,
 ): Promise<{
   item: Record<string, unknown>;
@@ -945,6 +1061,7 @@ async function requestCapabilityRepair(
   request: AiGatewayRequest,
   spreadsheetReadEnabled: boolean,
   dataProvider: SpreadsheetReadService | null,
+  logger: Logger | null,
   previousAnswer: string,
 ): Promise<GatewayExecutionResult> {
   const repaired = await createGatewayResponse(
@@ -954,6 +1071,7 @@ async function requestCapabilityRepair(
     request,
     spreadsheetReadEnabled,
     dataProvider,
+    logger,
     {
       additionalInstructions: spreadsheetReadEnabled
         ? LEGACY_CAPABILITY_REPAIR_MESSAGE
